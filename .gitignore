@@ -1,0 +1,27 @@
+# Python cache and test state
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Codex/QA scratch outputs
+.codex_tmp/
+.codex_qa_deneme/
+onizleme_pdf/
+onizleme_taahhutname/
+qa_rapor_sablonu.docx
+
+# Runtime logs and temporary Office files
+*.log
+~$*.docx
+~$*.xlsx
+~$*.xls
+
+# Local virtual environments and editor settings
+.venv/
+venv/
+.idea/
+.vscode/
+
+# OS metadata
+Thumbs.db
+Desktop.ini

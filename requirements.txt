@@ -1,0 +1,11 @@
+ttkbootstrap>=1.10.1
+pandas>=1.5.0
+tkintermapview>=1.29
+Pillow>=9.0.0
+numpy>=1.23.0
+opencv-python-headless>=4.8.0
+python-docx>=0.8.11
+openpyxl>=3.0.10
+pypdf>=3.0.0
+xlrd>=2.0.1
+pywin32>=306; platform_system == "Windows"
