@@ -53,7 +53,7 @@ class JeolojiPaftaIslemleri:
         except tk.TclError:
             pass
 
-        window = tk.Toplevel(self.root)
+        window = self.animasyonlu_pencere()
         self._jeoloji_pafta_penceresi = window
         window.title("1/100.000 Jeoloji Paftaları")
         window.geometry("1180x680")
@@ -157,7 +157,7 @@ class JeolojiPaftaIslemleri:
         if not jpeg_root:
             return
 
-        dialog = tk.Toplevel(self.root)
+        dialog = self.animasyonlu_pencere()
         dialog.title("Paftalar İçe Aktarılıyor")
         dialog.geometry("540x150")
         dialog.transient(self.root)
@@ -265,7 +265,7 @@ class JeolojiPaftaIslemleri:
                 previous.destroy()
         except tk.TclError:
             pass
-        window = tk.Toplevel(self.root)
+        window = self.animasyonlu_pencere()
         self._jeoloji_pafta_lejant_editoru = window
         window.title(f"Lejant Tanımlama — {Path(profile['jpeg_path']).name}")
         window.geometry("1320x820")
@@ -566,7 +566,7 @@ class JeolojiPaftaIslemleri:
         self._formasyon_sonuc_penceresi(results, errors, incomplete)
 
     def _formasyon_sonuc_penceresi(self, results, errors, incomplete):
-        window = tk.Toplevel(self.root)
+        window = self.animasyonlu_pencere()
         window.title("1/100.000 Jeoloji Paftası — Formasyon Adayları")
         window.geometry("1280x720")
         window.minsize(980, 600)

@@ -148,7 +148,7 @@ class IsTakibiIslemleri:
                 self.hata_kaydet("İş takibi indeksi güncellenemedi", exc)
 
     def is_takibi_penceresi(self):
-        pencere = tk.Toplevel(self.root)
+        pencere = self.animasyonlu_pencere()
         pencere.title("İş Takibi")
         pencere.geometry("1250x620")
         pencere.transient(self.root)

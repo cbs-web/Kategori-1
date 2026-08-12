@@ -144,18 +144,19 @@ class TasimaIslemleri:
         
         btn_f = ttk.Frame(frame)
         btn_f.pack(pady=5)
-        ttk.Button(btn_f, text="1- Formülleri Hesapla", command=self.tasima_hesapla, bootstyle="primary").pack(side="left", padx=5)
-        ttk.Button(btn_f, text="2- Word Metnini Oluştur", command=self.tasima_metni_olustur, bootstyle="success").pack(side="left", padx=5)
+        ttk.Button(btn_f, text="1. Formülleri Hesapla", command=self.tasima_hesapla, style="Secondary.TButton").pack(side="left", padx=5)
+        ttk.Button(btn_f, text="2. Word Metnini Oluştur", command=self.tasima_metni_olustur, style="Primary.TButton").pack(side="left", padx=5)
         
         txt_rf = ttk.LabelFrame(
             frame,
-            text=(
-                "Düzenlenebilir Rapor Metni (Metni doğrudan değiştirebilirsiniz; "
-                "tablonun yeri için [TABLO_BURADA] etiketini koruyun)"
-            ),
-            bootstyle="info",
+            text="Düzenlenebilir Rapor Metni",
         )
         txt_rf.pack(padx=10, pady=5, fill='both', expand=True)
+        ttk.Label(
+            txt_rf,
+            text="Tablonun konumunu korumak için [TABLO_BURADA] satırını silmeyin.",
+            style="Muted.TLabel",
+        ).pack(anchor="w", padx=5, pady=(0, 3))
         self.txt_tasima_rapor = tk.Text(txt_rf, height=13, wrap='word')
         self.txt_tasima_rapor.pack(padx=5, pady=5, fill='both', expand=True)
 

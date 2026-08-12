@@ -9,10 +9,7 @@ import tempfile
 from copy import deepcopy
 from ac_yn_islemleri import AcYnIslemleri
 from arayuz_yardimcilari import ArayuzYardimcilari
-from rapor import RaporUretici
-from rapor_on_kontrol import RaporOnKontrol
 from raporlama_islemleri import RaporlamaIslemleri
-from cizimler import CizimUretici
 from ekler_islemleri import EklerIslemleri
 from harita_islemleri import HaritaIslemleri
 from harita_renkleri import JEOLOJI_HARITA_RENK_ACIKLAMASI
@@ -125,6 +122,11 @@ class RaporProApp:
         self.tdth_verisi = bos_tdth_verisi()
         self.is_akisi_verisi = bos_is_akisi_verisi()
         self.proje_salt_okunur = False
+        self.animasyonlar_aktif = True
+        # Etkileşim sırasında tüm proje ağacını yeniden serileştirmek yerine
+        # ucuz bir kirli bayrağı tutulur. Tam karşılaştırma yalnızca dosya
+        # değiştirme/kapatma gibi doğrulama gereken sınır noktalarında yapılır.
+        self._proje_kirli = False
         self.taahhut_varsayilanlari = {
             "JEOFIZIK_MUH_AD": "",
             "JEOFIZIK_MUH_SICIL": "",
@@ -223,6 +225,7 @@ class RaporProApp:
         ilk_veri = self.verileri_topla()
         self.varsayilan_proje_verisi = deepcopy(ilk_veri)
         self.son_kayit_verisi = deepcopy(ilk_veri)
+        self._proje_kirli = False
         self.proje_durum_seridi_guncelle(kaydedilmedi=False)
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
@@ -334,6 +337,9 @@ class RaporProApp:
     def durum_mesaji_yaz(self, mesaj, dosya=None):
         return self.arayuz_yardimcilari().durum_mesaji_yaz(mesaj, dosya)
 
+    def animasyonlu_pencere(self, parent=None, **kwargs):
+        return self.arayuz_yardimcilari().animasyonlu_pencere(parent, **kwargs)
+
     def ikonlari_olustur(self):
         return self.arayuz_yardimcilari().ikonlari_olustur()
 
@@ -367,6 +373,15 @@ class RaporProApp:
             command=self.jeoloji_pafta_kutuphanesi_penceresi,
         )
         araclar_menusu.add_command(label="İş Takibi", command=self.is_takibi_penceresi)
+        araclar_menusu.add_separator()
+        self.animasyonlar_aktif_var = tk.BooleanVar(
+            master=self.root,
+            value=bool(getattr(self, "animasyonlar_aktif", True)),
+        )
+        araclar_menusu.add_checkbutton(
+            label="Pencere Animasyonları",
+            variable=self.animasyonlar_aktif_var,
+        )
         self.son_projeler_menusunu_guncelle()
 
     def sekmeleri_olustur(self):
@@ -581,11 +596,11 @@ class RaporProApp:
         
         btn_haritalar_f = ttk.Frame(ust_frame)
         btn_haritalar_f.pack(side="left", padx=15)
-        ttk.Button(btn_haritalar_f, text="Yakın Haritalar (MJH.. vb)", command=self.haritalari_hazirla, bootstyle="info").pack(side="left", padx=2)
-        ttk.Button(btn_haritalar_f, text="Yerbulduru Kaydet", command=self.yerbulduru_hazirla, bootstyle="danger").pack(side="left", padx=2)
-        ttk.Button(btn_haritalar_f, text="Parsel Haritası Hazırla", command=self.parsel_haritasi_hazirla, bootstyle="warning").pack(side="left", padx=2)
+        ttk.Button(btn_haritalar_f, text="Yakın Haritaları Hazırla", command=self.haritalari_hazirla, style="Secondary.TButton").pack(side="left", padx=2)
+        ttk.Button(btn_haritalar_f, text="Yerbulduru Hazırla", command=self.yerbulduru_hazirla, style="Secondary.TButton").pack(side="left", padx=2)
+        ttk.Button(btn_haritalar_f, text="Parsel Haritası Hazırla", command=self.parsel_haritasi_hazirla, style="Secondary.TButton").pack(side="left", padx=2)
         
-        ttk.Button(ust_frame, text="İşaretlemeyi Bitir ve Tablolara Aktar", command=self.harita_verilerini_senkronize_et, bootstyle="primary").pack(side="right", padx=5)
+        ttk.Button(ust_frame, text="İşaretleri Tablolara Aktar", command=self.harita_verilerini_senkronize_et, style="Primary.TButton").pack(side="right", padx=5)
 
         kutuphane_frame = ttk.Frame(frame)
         kutuphane_frame.pack(fill="x", padx=5, pady=(0, 5))
@@ -675,6 +690,9 @@ class RaporProApp:
         return self.arayuz_yardimcilari().tree_secili_satirlari_tasi(tree, yon)
 
     def cizim_uretici(self):
+        # Harita dışa aktarım bağımlılıkları yalnızca ilk gerçek kullanımda yüklenir.
+        from cizimler import CizimUretici
+
         return CizimUretici(self)
 
     def harita_kirpma_miktarlari(self, genislik, yukseklik):
@@ -713,6 +731,9 @@ class RaporProApp:
     def ciz_tarama_deseni(self, draw, zemin_tipi, x1, y1, x2, y2):
         return self.cizim_uretici().ciz_tarama_deseni(draw, zemin_tipi, x1, y1, x2, y2)
     def rapor_uretici(self):
+        # pandas/python-docx ağırlıklı rapor motoru açılış yolunu yavaşlatmasın.
+        from rapor import RaporUretici
+
         return RaporUretici(self)
 
     def docx_paragraflarini_dolas(self, doc):
@@ -731,6 +752,8 @@ class RaporProApp:
         return RaporlamaIslemleri(self)
 
     def rapor_on_kontrol_uretici(self):
+        from rapor_on_kontrol import RaporOnKontrol
+
         return RaporOnKontrol(self)
 
     def rapor_on_kontrol(self, devam_sor=True):

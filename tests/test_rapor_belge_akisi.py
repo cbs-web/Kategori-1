@@ -6,7 +6,9 @@ import pytest
 from PIL import Image
 from docx import Document
 from docx.enum.style import WD_STYLE_TYPE
-from docx.shared import RGBColor
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.shared import Pt, RGBColor
 
 from rapor import RaporUretici
 from raporlama_islemleri import atomik_docx_kaydet
@@ -44,6 +46,96 @@ class App:
 
     def hata_kaydet(self, message, error=None):
         self.errors.append((message, error))
+
+
+def _word_metni(document):
+    return "\n".join(
+        "".join(node.text or "" for node in part.element.xpath(".//w:t"))
+        for part in document.part.package.parts
+        if str(getattr(part, "partname", "")).startswith("/word/")
+        and hasattr(part, "element")
+    )
+
+
+def test_rapor_etiketleri_tek_geciste_govde_tablo_header_footer_ve_runlarda_degistirir():
+    document = Document()
+    paragraph = document.add_paragraph()
+    paragraph.add_run("Proje: ")
+    bold_run = paragraph.add_run("[PROJE_ADI]")
+    bold_run.bold = True
+    bold_run.font.size = Pt(13)
+    split = document.add_paragraph()
+    split.add_run("[IL").italic = True
+    split.add_run("CE]")
+    split.add_run(" / [IL]")
+
+    table = document.add_table(rows=1, cols=1)
+    table.cell(0, 0).text = "Ada [ADA], parsel [PARSEL]"
+    header = document.sections[0].header
+    header.paragraphs[0].text = "[PROJE_ADI] - [IL]"
+    footer = document.sections[0].footer
+    footer.paragraphs[0].text = "Sayfa [PARSEL]"
+
+    uretici = RaporUretici(App())
+    replacements = {
+        "[PROJE_ADI]": "Deneme Projesi",
+        "[ILCE]": "Ezine",
+        "[IL]": "Çanakkale",
+        "[ADA]": "12",
+        "[PARSEL]": "34",
+    }
+    assert uretici.rapor_metinleri_toplu_degistir(document, replacements) == 8
+
+    assert paragraph.text == "Proje: Deneme Projesi"
+    assert paragraph.runs[1].bold is True
+    assert paragraph.runs[1].font.size == Pt(13)
+    assert split.text == "Ezine / Çanakkale"
+    assert table.cell(0, 0).text == "Ada 12, parsel 34"
+    assert header.paragraphs[0].text == "Deneme Projesi - Çanakkale"
+    assert footer.paragraphs[0].text == "Sayfa 34"
+    assert not any(tag in _word_metni(document) for tag in replacements)
+
+
+def test_rapor_etiketleri_ham_xml_metin_kutusunda_ve_bolunmus_dugumlerde_degistirir():
+    document = Document()
+    paragraph = document.add_paragraph("Gövde")
+    sdt = OxmlElement("w:sdt")
+    sdt_content = OxmlElement("w:sdtContent")
+    for values in (("[PROJE_", "ADI]"), ("[IL", "]")):
+        textbox = OxmlElement("w:txbxContent")
+        p_element = OxmlElement("w:p")
+        for value in values:
+            run = OxmlElement("w:r")
+            text = OxmlElement("w:t")
+            text.text = value
+            run.append(text)
+            p_element.append(run)
+        textbox.append(p_element)
+        sdt_content.append(textbox)
+    sdt.append(sdt_content)
+    paragraph._p.append(sdt)
+
+    uretici = RaporUretici(App())
+    uretici.rapor_metinleri_toplu_degistir(
+        document,
+        {"[PROJE_ADI]": "Kozlu 151/10", "[IL]": "Çanakkale"},
+    )
+
+    xml_text = _word_metni(document)
+    assert "Kozlu 151/10" in xml_text
+    assert "Çanakkale" in xml_text
+    assert "[PROJE_ADI]" not in xml_text
+    assert "[IL]" not in xml_text
+
+
+def test_rapor_metin_degistir_tekil_api_geriye_uyumlu_kalir():
+    document = Document()
+    document.add_paragraph("[ADA]-[ADA]")
+
+    count = RaporUretici(App()).rapor_metin_degistir(document, "[ADA]", 17)
+
+    assert count == 2
+    assert document.paragraphs[0].text == "17-17"
 
 
 def _png(path, color):

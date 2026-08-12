@@ -452,7 +452,7 @@ class OnDegerIslemleri:
         )
 
     def on_deger_gecmisini_goster(self):
-        pencere = tk.Toplevel(self.root)
+        pencere = self.animasyonlu_pencere()
         pencere.title("Ön Değer Geçmişi")
         pencere.geometry("900x430")
         pencere.transient(self.root)
@@ -502,7 +502,7 @@ class OnDegerIslemleri:
             messagebox.showinfo("İş Aşaması", "Bu aşamadan yapılabilecek bir geçiş bulunmuyor.")
             return None
 
-        pencere = tk.Toplevel(self.root)
+        pencere = self.animasyonlu_pencere()
         pencere.title("Aşamayı Değiştir")
         pencere.geometry("430x180")
         pencere.resizable(False, False)
@@ -586,7 +586,7 @@ class OnDegerIslemleri:
             messagebox.showwarning("İş Aşaması", str(exc))
 
     def bitmis_proje_acilis_secimi(self):
-        pencere = tk.Toplevel(self.root)
+        pencere = self.animasyonlu_pencere()
         pencere.title("Bitmiş Proje")
         pencere.geometry("520x220")
         pencere.resizable(False, False)

@@ -132,6 +132,48 @@ class SahteBaslikRoot:
         return self.baslik
 
 
+class KirliDurumUygulamasi:
+    def __init__(self, kirli, son_kayit=None, guncel=None):
+        self.proje_salt_okunur = False
+        self._proje_kirli = kirli
+        self.son_kayit_verisi = copy.deepcopy(son_kayit)
+        self.guncel = copy.deepcopy(guncel)
+        self.toplama_sayisi = 0
+
+    def verileri_topla(self):
+        self.toplama_sayisi += 1
+        return copy.deepcopy(self.guncel)
+
+
+class KirliDurumYoneticisi(KayitYoneticisi):
+    def verileri_topla(self):
+        return self.app.verileri_topla()
+
+
+def test_temiz_proje_kirli_kontrolunde_tum_veriyi_toplamaz():
+    app = KirliDurumUygulamasi(False, {"a": 1}, {"a": 1})
+    yonetici = KirliDurumYoneticisi(app)
+
+    assert yonetici.kaydedilmemis_degisiklik_var_mi() is False
+    assert app.toplama_sayisi == 0
+
+
+def test_kirli_bayrak_sinir_noktasinda_tam_karsilastirmayla_dogrulanir():
+    app = KirliDurumUygulamasi(True, {"a": 1}, {"a": 2})
+    yonetici = KirliDurumYoneticisi(app)
+
+    assert yonetici.kaydedilmemis_degisiklik_var_mi() is True
+    assert app.toplama_sayisi == 1
+
+
+def test_geri_alinan_duzenleme_kirli_bayragini_temizler():
+    app = KirliDurumUygulamasi(True, {"a": 1}, {"a": 1})
+    yonetici = KirliDurumYoneticisi(app)
+
+    assert yonetici.kaydedilmemis_degisiklik_var_mi() is False
+    assert app._proje_kirli is False
+
+
 class KayitAkisiYoneticisi(KayitYoneticisi):
     """Dosya aç/kaydet sözleşmesini arayüz widget'larından bağımsız sınar."""
 

@@ -1,8 +1,111 @@
+import os
+import time
 import tkinter as tk
 from tkinter import ttk, messagebox
 
 import ttkbootstrap as tb
 from PIL import Image, ImageDraw, ImageTk
+
+
+ARAYUZ_RENKLERI = {
+    "zemin": "#f5f7fa",
+    "yuzey": "#ffffff",
+    "yuzey_ikincil": "#eef2f6",
+    "cizgi": "#d7dee7",
+    "metin": "#172033",
+    "metin_ikincil": "#526176",
+    # Uygulamada zaten kullanılan ana mavi; yeni bir marka rengi icat edilmez.
+    "vurgu": "#2563eb",
+    "vurgu_koyu": "#1d4ed8",
+    "tehlike": "#9f2d2d",
+}
+
+
+def yumusak_cikis_degeri(oran):
+    """0..1 aralığında, ani bitişi olmayan ease-out cubic eğrisi."""
+    oran = max(0.0, min(1.0, float(oran)))
+    return 1.0 - ((1.0 - oran) ** 3)
+
+
+class AnimasyonluToplevel(tk.Toplevel):
+    """Windows yardımcı pencereleri için kısa, iptal edilebilir giriş/çıkış hareketi."""
+
+    def __init__(self, master=None, *, animasyon_aktif=True, **kwargs):
+        super().__init__(master, **kwargs)
+        self._animasyon_aktif = bool(animasyon_aktif)
+        self._animasyon_after_id = None
+        self._animasyon_kapaniyor = False
+        self._animasyon_hedef_y = None
+        if self._animasyon_aktif:
+            try:
+                self.wm_attributes("-alpha", 0.0)
+            except tk.TclError:
+                self._animasyon_aktif = False
+        self.after_idle(self._giris_animasyonunu_baslat)
+
+    def _after_iptal(self):
+        if self._animasyon_after_id is not None:
+            try:
+                self.after_cancel(self._animasyon_after_id)
+            except tk.TclError:
+                pass
+            self._animasyon_after_id = None
+
+    def _giris_animasyonunu_baslat(self):
+        if not self._animasyon_aktif or self._animasyon_kapaniyor:
+            return
+        try:
+            self.update_idletasks()
+            self._animasyon_hedef_y = self.winfo_y()
+            self.geometry(f"+{self.winfo_x()}+{self._animasyon_hedef_y + 8}")
+        except tk.TclError:
+            return
+        self._animasyon_karesi(time.perf_counter(), 0.17, giris=True)
+
+    def _animasyon_karesi(self, baslangic, sure, *, giris):
+        try:
+            oran = min(1.0, (time.perf_counter() - baslangic) / sure)
+            yumusak = yumusak_cikis_degeri(oran)
+            alpha = yumusak if giris else 1.0 - yumusak
+            self.wm_attributes("-alpha", alpha)
+            if giris and self._animasyon_hedef_y is not None:
+                y = round(self._animasyon_hedef_y + (8 * (1.0 - yumusak)))
+                self.geometry(f"+{self.winfo_x()}+{y}")
+            if oran < 1.0:
+                self._animasyon_after_id = self.after(
+                    16, lambda: self._animasyon_karesi(baslangic, sure, giris=giris)
+                )
+            elif giris:
+                self._animasyon_after_id = None
+                self.wm_attributes("-alpha", 1.0)
+            else:
+                super().destroy()
+        except tk.TclError:
+            if not giris:
+                try:
+                    super().destroy()
+                except tk.TclError:
+                    pass
+
+    def destroy(self):
+        if not self._animasyon_aktif:
+            return super().destroy()
+        if self._animasyon_kapaniyor:
+            return None
+        try:
+            if not self.winfo_exists():
+                return None
+        except tk.TclError:
+            return None
+        self._animasyon_kapaniyor = True
+        self._after_iptal()
+        try:
+            if self.grab_current() == self:
+                self.grab_release()
+        except tk.TclError:
+            pass
+        self._animasyon_karesi(time.perf_counter(), 0.11, giris=False)
+        return None
 
 
 class ArayuzYardimcilari:
@@ -18,26 +121,59 @@ class ArayuzYardimcilari:
         else:
             setattr(self.app, name, value)
 
+    def animasyonlar_aktif_mi(self):
+        ortam = str(os.environ.get("K1_REDUCED_MOTION", "")).strip().lower()
+        test_ortami = bool(os.environ.get("PYTEST_CURRENT_TEST"))
+        if ortam in {"1", "true", "evet", "yes", "on"} or test_ortami:
+            return False
+        degisken = getattr(self, "animasyonlar_aktif_var", None)
+        if degisken is not None:
+            try:
+                return bool(degisken.get())
+            except (AttributeError, tk.TclError):
+                pass
+        ayar = getattr(self, "animasyonlar_aktif", None)
+        return True if ayar is None else bool(ayar)
+
+    def animasyonlu_pencere(self, parent=None, **kwargs):
+        return AnimasyonluToplevel(
+            parent or self.root,
+            animasyon_aktif=self.animasyonlar_aktif_mi(),
+            **kwargs,
+        )
+
     def genel_stilleri_hazirla(self):
         self.root.option_add("*Font", "{Segoe UI} 10")
         self.root.option_add("*TCombobox*Listbox.font", "{Segoe UI} 10")
 
         style = tb.Style()
-        style.configure(".", font=("Segoe UI", 10))
-        style.configure("TLabel", font=("Segoe UI", 10))
-        style.configure("TButton", font=("Segoe UI", 10), padding=(10, 5))
-        style.configure("TEntry", padding=4)
-        style.configure("TCombobox", padding=4)
-        style.configure("TNotebook", tabmargins=(4, 4, 4, 0))
-        style.configure("TNotebook.Tab", font=("Segoe UI", 9, "bold"), padding=(12, 7))
-        style.configure("Baslik.TLabel", font=("Segoe UI", 14, "bold"), foreground="#1f2937")
-        style.configure("AltBaslik.TLabel", font=("Segoe UI", 11, "bold"), foreground="#334155")
-        style.configure("Muted.TLabel", font=("Segoe UI", 9), foreground="#64748b")
-        style.configure("Status.TLabel", font=("Segoe UI", 9), foreground="#475569")
-        style.configure("Panel.TFrame", background="#f8fafc")
-        style.configure("Status.TFrame", background="#f1f5f9")
-        style.configure("Treeview", font=("Segoe UI", 9), rowheight=42)
-        style.configure("Treeview.Heading", font=("Segoe UI", 9, "bold"), padding=(6, 6))
+        renk = ARAYUZ_RENKLERI
+        self.root.configure(background=renk["zemin"])
+        style.configure(".", font=("Segoe UI", 10), foreground=renk["metin"])
+        style.configure("TFrame", background=renk["zemin"])
+        style.configure("TLabel", font=("Segoe UI", 10), background=renk["zemin"], foreground=renk["metin"])
+        style.configure("TButton", font=("Segoe UI", 10, "bold"), padding=(11, 6))
+        style.configure("Primary.TButton", background=renk["vurgu"], foreground="white", bordercolor=renk["vurgu"])
+        style.map("Primary.TButton", background=[("active", renk["vurgu_koyu"]), ("pressed", renk["vurgu_koyu"])])
+        style.configure("Secondary.TButton", background=renk["yuzey"], foreground=renk["metin"], bordercolor=renk["cizgi"])
+        style.map("Secondary.TButton", background=[("active", renk["yuzey_ikincil"])])
+        style.configure("Danger.TButton", background=renk["tehlike"], foreground="white", bordercolor=renk["tehlike"])
+        style.configure("TEntry", padding=5, fieldbackground=renk["yuzey"])
+        style.configure("TCombobox", padding=5, fieldbackground=renk["yuzey"])
+        style.configure("TLabelframe", background=renk["zemin"], bordercolor=renk["cizgi"], relief="solid")
+        style.configure("TLabelframe.Label", background=renk["zemin"], foreground=renk["metin"], font=("Segoe UI", 10, "bold"))
+        style.configure("TNotebook", background=renk["zemin"], borderwidth=0, tabmargins=(0, 0, 0, 0))
+        style.configure("TNotebook.Tab", font=("Segoe UI", 9, "bold"), padding=(11, 8), background=renk["yuzey_ikincil"], foreground=renk["metin_ikincil"])
+        style.map("TNotebook.Tab", background=[("selected", renk["yuzey"])], foreground=[("selected", renk["vurgu"])])
+        style.configure("Baslik.TLabel", font=("Segoe UI", 16, "bold"), foreground=renk["metin"])
+        style.configure("AltBaslik.TLabel", font=("Segoe UI", 11, "bold"), foreground=renk["metin"])
+        style.configure("Muted.TLabel", font=("Segoe UI", 9), foreground=renk["metin_ikincil"])
+        style.configure("Status.TLabel", font=("Segoe UI", 9), background=renk["yuzey_ikincil"], foreground=renk["metin_ikincil"])
+        style.configure("Panel.TFrame", background=renk["yuzey"])
+        style.configure("Status.TFrame", background=renk["yuzey_ikincil"])
+        style.configure("Treeview", font=("Segoe UI", 9), rowheight=32, background=renk["yuzey"], fieldbackground=renk["yuzey"], bordercolor=renk["cizgi"])
+        style.configure("Treeview.Heading", font=("Segoe UI", 9, "bold"), padding=(7, 7), background=renk["yuzey_ikincil"], foreground=renk["metin"])
+        style.map("Treeview", background=[("selected", renk["vurgu"])], foreground=[("selected", "white")])
 
     def durum_cubugu_olustur(self):
         self.durum_var = tk.StringVar(value="Hazır")
@@ -73,7 +209,7 @@ class ArayuzYardimcilari:
 
     def tablo_stillerini_hazirla(self):
         style = tb.Style()
-        self.tablo_satir_yuksekligi = 42
+        self.tablo_satir_yuksekligi = 32
         style.configure("Treeview", rowheight=self.tablo_satir_yuksekligi)
         style.configure("AcYn.Treeview", rowheight=self.tablo_satir_yuksekligi)
         style.configure("Lab.Treeview", rowheight=self.tablo_satir_yuksekligi)

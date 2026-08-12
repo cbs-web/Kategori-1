@@ -1,12 +1,20 @@
-from arayuz_yardimcilari import ArayuzYardimcilari
+from arayuz_yardimcilari import ArayuzYardimcilari, yumusak_cikis_degeri
 import sys
 from types import SimpleNamespace
 
-from bagimlilik_kontrol import surum_yeterli_mi, tkinter_kontrol_et
+from bagimlilik_kontrol import paketleri_kontrol_et, surum_yeterli_mi, tkinter_kontrol_et
 
 
 class SahteUygulama:
     pass
+
+
+def test_pencere_animasyonu_egrisi_sinirli_ve_yumusaktir():
+    assert yumusak_cikis_degeri(-1) == 0.0
+    assert yumusak_cikis_degeri(0) == 0.0
+    assert 0.5 < yumusak_cikis_degeri(0.5) < 1.0
+    assert yumusak_cikis_degeri(1) == 1.0
+    assert yumusak_cikis_degeri(2) == 1.0
 
 
 class SahteTree:
@@ -79,6 +87,19 @@ def test_paket_surumu_sayisal_olarak_karsilastirilir():
     assert surum_yeterli_mi("3.0.0+yerel", "3.0.0")
     assert not surum_yeterli_mi("1.9.9", "1.10.0")
     assert not surum_yeterli_mi("bilinmiyor", "1.0")
+
+
+def test_hizli_paket_kontrolu_modulu_ice_aktarmaz(monkeypatch):
+    ice_aktarilan = []
+    monkeypatch.setattr("bagimlilik_kontrol.importlib.util.find_spec", lambda _ad: object())
+    monkeypatch.setattr("bagimlilik_kontrol.importlib.metadata.version", lambda _ad: "2.0.0")
+    monkeypatch.setattr(
+        "bagimlilik_kontrol.importlib.import_module",
+        lambda ad: ice_aktarilan.append(ad),
+    )
+
+    assert paketleri_kontrol_et({"ornek": ("ornek_modul", "1.0")}) == []
+    assert ice_aktarilan == []
 
 
 def test_gorunmeyen_hucre_bos_bbox_ile_hata_uretmez():

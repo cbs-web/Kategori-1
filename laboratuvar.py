@@ -4,10 +4,6 @@ import os
 import re
 import unicodedata
 
-import pandas as pd
-from docx.shared import Pt
-
-
 LAB_AC_KOLONLARI = (
     "No",
     "Derinlik",
@@ -325,7 +321,7 @@ def _benzersiz_sutun_bul(df, takma_adlar, kullanilan_indeksler):
         adaylar = [(str(kolon), 1000)]
         for satir_no in range(min(4, len(df))):
             hucre = df.iloc[satir_no, indeks]
-            if pd.isna(hucre):
+            if hucre is None or str(hucre).strip().casefold() == "nan":
                 continue
             hucre_metni = str(hucre).strip()
             if hucre_metni and len(hucre_metni) <= 80:
@@ -345,6 +341,9 @@ def _benzersiz_sutun_bul(df, takma_adlar, kullanilan_indeksler):
 
 
 def laboratuvar_dosyasi_oku(dosya_yolu):
+    # pandas yalnız Excel/CSV dosyası gerçekten okunduğunda yüklenir.
+    import pandas as pd
+
     uzanti = os.path.splitext(str(dosya_yolu))[1].lower()
     if uzanti not in LAB_DESTEKLENEN_UZANTILAR:
         raise ValueError("Laboratuvar dosyası .xlsx, .xls veya .csv biçiminde olmalıdır.")
@@ -474,6 +473,8 @@ def laboratuvar_dataframe_satirlari(df):
 
 
 def rapor_lab_tablosu_olustur(doc, tree, kolon_map, tabloyu_ortala, tablo_stili_uygula=None):
+    from docx.shared import Pt
+
     satirlar = tree.get_children()
     if not satirlar:
         return None

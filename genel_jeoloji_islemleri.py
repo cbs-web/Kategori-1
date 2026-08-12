@@ -296,7 +296,7 @@ class GenelJeolojiIslemleri:
             else {}
         )
 
-        window = tk.Toplevel(self.root)
+        window = self.animasyonlu_pencere()
         window.title("1/100.000 Genel Jeoloji Haritası ve 2.1 Bölgesel Jeoloji")
         window.geometry("1500x900")
         window.minsize(1150, 720)
@@ -713,7 +713,7 @@ class GenelJeolojiIslemleri:
         def open_ai_settings():
             manager = JeolojiYapayZekaAyarlari(self.kullanici_veri_klasoru_bul())
             settings = manager.oku()
-            dialog = tk.Toplevel(window)
+            dialog = self.animasyonlu_pencere(window)
             dialog.title("Jeoloji Yapay Zekâ Ayarları")
             dialog.geometry("700x650")
             dialog.minsize(650, 590)

@@ -406,7 +406,8 @@ class HaritaIslemleri:
             mesaj += "\n\nHaritada olmayan kayıtlar veri kaybını önlemek için korundu."
         if merkez_guncellendi:
             mesaj += "\n\nMerkez koordinatları 'Arazi Bilgileri' sekmesine aktarıldı."
-        messagebox.showinfo("Senkronizasyon Tamamlandı", mesaj)
+        if hasattr(self, "durum_mesaji_yaz"):
+            self.durum_mesaji_yaz(mesaj.replace("\n", " · "))
 
     def _harita_orphan_lab_satirlarini_sil(self, orphan_isimler):
         hedefler = {str(isim) for isim in orphan_isimler}
@@ -542,7 +543,7 @@ class HaritaIslemleri:
         ):
             return False
 
-        progress = tk.Toplevel(self.root)
+        progress = self.animasyonlu_pencere()
         progress.title("TKGM KML")
         progress.transient(self.root)
         progress.resizable(False, False)

@@ -1,5 +1,43 @@
 from on_deger import bos_is_akisi_verisi, bos_on_deger_verisi, is_durumu_degistir, on_deger_revizyonu_ekle
-from proje_durumu_islemleri import parsel_haritasi_durumu_hazirla, proje_durum_ozeti_hazirla
+from proje_durumu_islemleri import (
+    ProjeDurumuIslemleri,
+    parsel_haritasi_durumu_hazirla,
+    proje_durum_ozeti_hazirla,
+)
+
+
+class _SahteRoot:
+    def __init__(self):
+        self.planlanan = None
+        self.iptal = []
+
+    def after(self, gecikme, callback):
+        self.planlanan = (gecikme, callback)
+        return "after-1"
+
+    def after_cancel(self, kimlik):
+        self.iptal.append(kimlik)
+
+
+class _SahteWidget:
+    def __init__(self, sinif):
+        self.sinif = sinif
+
+    def winfo_class(self):
+        return self.sinif
+
+
+class _SahteOlay:
+    def __init__(self, olay_tipi, widget_sinifi=None):
+        self.type = olay_tipi
+        self.widget = _SahteWidget(widget_sinifi) if widget_sinifi else None
+
+
+class _SahteApp:
+    def __init__(self):
+        self.root = _SahteRoot()
+        self._proje_kirli = False
+        self._proje_durumu_after_id = None
 
 
 def test_dogrudan_yazim_seridi_on_deger_yok_gosterir():
@@ -18,6 +56,7 @@ def test_dogrudan_yazim_seridi_on_deger_yok_gosterir():
     assert ozet["proje_adi"] == "Ercan Şahin"
     assert ozet["konum"] == "Ayvacık / Kozlu / Köyiçi"
     assert ozet["ada_parsel"] == "ADA 151 — PARSEL 10"
+    assert ozet["pencere_basligi"].endswith("KAYDEDİLMEDİ")
 
 
 def test_bitmis_izleme_ozeti_baslikta_yalniz_mevcut_asamayi_gosterir():
@@ -72,3 +111,28 @@ def test_parsel_haritasi_eski_geometriyi_gostermez(tmp_path):
 
     assert sonuc["kod"] == "geometri_degisti"
     assert sonuc["goster"] is False
+
+
+def test_kullanici_etkilesimi_kirli_bayragini_isaretleyip_hizli_yenileme_planlar():
+    app = _SahteApp()
+
+    ProjeDurumuIslemleri(app).proje_durumu_yenilemeyi_planla(_SahteOlay("2"))
+
+    assert app._proje_kirli is True
+    assert app.root.planlanan[0] == 160
+
+
+def test_notebook_sekme_degistirmek_projeyi_kirli_yapmaz():
+    app = _SahteApp()
+
+    ProjeDurumuIslemleri(app).proje_durumu_yenilemeyi_planla(_SahteOlay("35"))
+
+    assert app._proje_kirli is False
+
+
+def test_notebook_uzerindeki_fare_birakma_projeyi_kirli_yapmaz():
+    app = _SahteApp()
+
+    ProjeDurumuIslemleri(app).proje_durumu_yenilemeyi_planla(_SahteOlay("5", "TNotebook"))
+
+    assert app._proje_kirli is False

@@ -78,7 +78,7 @@ class TemelBilgilerIslemleri:
         for index, (metin, kod) in enumerate(alanlar):
             row = index // 2
             col = (index % 2) * 2
-            ttk.Label(grup, text=f"{metin} [{kod}]", style="Muted.TLabel").grid(
+            ttk.Label(grup, text=metin, style="Muted.TLabel").grid(
                 row=row, column=col, sticky="w", padx=(0, 8), pady=5
             )
             entry = ttk.Entry(grup)

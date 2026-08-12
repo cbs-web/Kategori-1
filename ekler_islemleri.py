@@ -37,17 +37,17 @@ class EklerIslemleri:
         self.ek_ozet_label.pack(side="right")
         ttk.Separator(page).pack(fill="x", pady=(0, 12))
 
-        akis = ttk.LabelFrame(page, text="İş Akışı", padding=(10, 8), bootstyle="secondary")
+        akis = ttk.LabelFrame(page, text="İş Akışı", padding=(10, 8))
         akis.pack(fill="x", pady=(0, 10))
-        ttk.Button(akis, text="Ekleri Kontrol Et", command=self.ek_kontrol_ozeti_goster, bootstyle="info").pack(side="left", padx=(0, 8))
-        ttk.Button(akis, text="Mühendis Bilgileri", command=self.taahhut_bilgilerini_duzenle, bootstyle="secondary outline").pack(side="left", padx=(0, 8))
-        ttk.Button(akis, text="Taahhütnameleri Oluştur", command=self.taahhutnameleri_olustur, bootstyle="success outline").pack(side="left", padx=(0, 8))
-        ttk.Button(akis, text="Sıralı EKLER PDF Oluştur", command=self.ekler_pdf_olustur, bootstyle="success").pack(side="left")
+        ttk.Button(akis, text="Ekleri Kontrol Et", command=self.ek_kontrol_ozeti_goster, style="Secondary.TButton").pack(side="left", padx=(0, 8))
+        ttk.Button(akis, text="Mühendis Bilgileri", command=self.taahhut_bilgilerini_duzenle, style="Secondary.TButton").pack(side="left", padx=(0, 8))
+        ttk.Button(akis, text="Taahhütnameleri Oluştur", command=self.taahhutnameleri_olustur, style="Secondary.TButton").pack(side="left", padx=(0, 8))
+        ttk.Button(akis, text="Sıralı EKLER PDF Oluştur", command=self.ekler_pdf_olustur, style="Primary.TButton").pack(side="left")
 
-        durum_frame = ttk.LabelFrame(page, text="Kategori Durumu", padding=(8, 8), bootstyle="secondary")
+        durum_frame = ttk.Frame(page, padding=(0, 4))
         durum_frame.pack(fill="x", pady=(0, 10))
         for kategori in self.ek_kategorileri:
-            lbl = ttk.Label(durum_frame, text=f"{kategori}: Eksik", padding=(8, 4), relief="groove", bootstyle="secondary")
+            lbl = ttk.Label(durum_frame, text=f"{kategori}: Eksik", padding=(4, 2), style="Muted.TLabel")
             lbl.pack(side="left", padx=(0, 6))
             self.ek_durum_etiketleri[kategori] = lbl
 
@@ -62,11 +62,11 @@ class EklerIslemleri:
 
             toolbar = ttk.Frame(kat_frame)
             toolbar.pack(fill="x", pady=(0, 8))
-            ttk.Button(toolbar, text="Dosya Ekle", command=lambda k=kategori: self.ek_dosya_ekle(k), bootstyle="primary").pack(side="left", padx=(0, 6))
-            ttk.Button(toolbar, text="Seçiliyi Sil", command=lambda k=kategori: self.ek_secili_sil(k), bootstyle="secondary").pack(side="left", padx=(0, 6))
-            ttk.Button(toolbar, text="Yukarı", command=lambda k=kategori: self.ek_secili_tasi(k, -1), bootstyle="secondary").pack(side="left", padx=(0, 6))
-            ttk.Button(toolbar, text="Aşağı", command=lambda k=kategori: self.ek_secili_tasi(k, 1), bootstyle="secondary").pack(side="left", padx=(0, 6))
-            ttk.Button(toolbar, text="Başlık Düzenle", command=lambda k=kategori: self.ek_baslik_duzenle(k), bootstyle="info").pack(side="left", padx=(0, 6))
+            ttk.Button(toolbar, text="Dosya Ekle", command=lambda k=kategori: self.ek_dosya_ekle(k), style="Primary.TButton").pack(side="left", padx=(0, 6))
+            ttk.Button(toolbar, text="Seçiliyi Sil", command=lambda k=kategori: self.ek_secili_sil(k), style="Secondary.TButton").pack(side="left", padx=(0, 6))
+            ttk.Button(toolbar, text="Yukarı", command=lambda k=kategori: self.ek_secili_tasi(k, -1), style="Secondary.TButton").pack(side="left", padx=(0, 6))
+            ttk.Button(toolbar, text="Aşağı", command=lambda k=kategori: self.ek_secili_tasi(k, 1), style="Secondary.TButton").pack(side="left", padx=(0, 6))
+            ttk.Button(toolbar, text="Başlığı Düzenle", command=lambda k=kategori: self.ek_baslik_duzenle(k), style="Secondary.TButton").pack(side="left", padx=(0, 6))
 
             kolonlar = ("Sıra", "Başlık", "Tür", "Durum", "Dosya")
             scroll_y = ttk.Scrollbar(kat_frame, orient="vertical")
@@ -214,29 +214,29 @@ class EklerIslemleri:
 
             if hasattr(self, "ekler_notebook") and hasattr(self, "ek_kategori_frame"):
                 self.ekler_notebook.tab(self.ek_kategori_frame[kat], text=f"{kat} ({len(self.ekler.get(kat, []))})")
-            durum_metni, bootstyle = self.ek_kategori_durumunu_hazirla(kat)
+            durum_metni, _bootstyle = self.ek_kategori_durumunu_hazirla(kat)
             lbl = self.ek_durum_etiketleri.get(kat)
             if lbl:
-                lbl.config(text=f"{kat}: {durum_metni}", bootstyle=bootstyle)
+                lbl.config(text=f"{kat}: {durum_metni}", style="Muted.TLabel")
 
         denetim = ekleri_denetle(self.ekler, self.ek_kategorileri)
         if hasattr(self, "ek_ozet_label"):
             if denetim["eksik_dosyalar"]:
-                self.ek_ozet_label.config(text=f"Toplam {denetim['toplam']} dosya / {len(denetim['eksik_dosyalar'])} dosya bulunamadı", bootstyle="warning")
+                self.ek_ozet_label.config(text=f"{denetim['toplam']} dosya · {len(denetim['eksik_dosyalar'])} bulunamadı", style="AltBaslik.TLabel")
             elif denetim["donusum_gerekenler"]:
-                self.ek_ozet_label.config(text=f"Toplam {denetim['toplam']} dosya / {len(denetim['donusum_gerekenler'])} dosya PDF'e çevrilmeli", bootstyle="warning")
+                self.ek_ozet_label.config(text=f"{denetim['toplam']} dosya · {len(denetim['donusum_gerekenler'])} PDF bekliyor", style="AltBaslik.TLabel")
             elif denetim["bos_kategoriler"]:
-                self.ek_ozet_label.config(text=f"Toplam {denetim['toplam']} dosya / Eksik kategori: {len(denetim['bos_kategoriler'])}", bootstyle="danger")
+                self.ek_ozet_label.config(text=f"{denetim['toplam']} dosya · {len(denetim['bos_kategoriler'])} boş kategori", style="AltBaslik.TLabel")
             elif denetim["otomatik_donusumler"]:
                 self.ek_ozet_label.config(
                     text=(
                         f"Toplam {denetim['toplam']} dosya / "
                         f"{len(denetim['otomatik_donusumler'])} Word otomatik PDF'e çevrilecek"
                     ),
-                    bootstyle="info",
+                    style="AltBaslik.TLabel",
                 )
             else:
-                self.ek_ozet_label.config(text=f"Toplam {denetim['toplam']} dosya / PDF hazır", bootstyle="success")
+                self.ek_ozet_label.config(text=f"{denetim['toplam']} dosya · PDF hazır", style="AltBaslik.TLabel")
 
     def ek_denetim_mesaji(self, denetim):
         satirlar = [

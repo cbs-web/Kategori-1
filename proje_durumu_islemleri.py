@@ -4,6 +4,7 @@ from tkinter import ttk
 
 from PIL import Image, ImageTk
 
+from arayuz_yardimcilari import ARAYUZ_RENKLERI
 from on_deger import IS_DURUMLARI, normalize_is_akisi, on_deger_durumu
 
 
@@ -102,6 +103,8 @@ def proje_durum_ozeti_hazirla(veriler, salt_okunur=False, kaydedilmedi=False):
     konum = " / ".join(parca for parca in (ilce, koy, mevkii) if parca) or "Konum bilgisi girilmedi"
     ada_parsel = f"ADA {ada or '-'} — PARSEL {parsel or '-'}"
     baslik_parcalari = ["K-1", turkce_buyuk_harf(asama), turkce_buyuk_harf(kimlik)]
+    if kaydedilmedi:
+        baslik_parcalari.append("KAYDEDİLMEDİ")
     return {
         "kimlik": kimlik,
         "proje_adi": proje_adi,
@@ -138,30 +141,31 @@ class ProjeDurumuIslemleri:
 
     def _serit_stillerini_hazirla(self):
         style = ttk.Style()
-        style.configure("ProjeOzet.TFrame", background="#f8fafc")
+        renk = ARAYUZ_RENKLERI
+        style.configure("ProjeOzet.TFrame", background=renk["zemin"])
         style.configure(
             "ProjeKimligi.TLabel",
-            background="#f8fafc",
-            foreground="#0f172a",
-            font=("Segoe UI", 15, "bold"),
+            background=renk["zemin"],
+            foreground=renk["metin_ikincil"],
+            font=("Segoe UI", 12),
         )
-        for kod, renk in IS_DURUM_RENKLERI.items():
+        for kod in IS_DURUM_RENKLERI:
             style.configure(
                 f"ProjeAsama.{kod}.TLabel",
-                background=renk,
-                foreground="white",
-                font=("Segoe UI", 22, "bold"),
-                padding=(20, 18),
+                background=renk["yuzey"],
+                foreground=renk["vurgu"],
+                font=("Segoe UI", 20, "bold"),
+                padding=(16, 12),
             )
-        rozet_yazi = ("Segoe UI", 11, "bold")
-        rozet_bosluk = (14, 9)
-        style.configure("ProjeOnDegerVar.TLabel", background="#ffedd5", foreground="#9a3412", font=rozet_yazi, padding=rozet_bosluk)
-        style.configure("ProjeOnDegerYok.TLabel", background="#e5e7eb", foreground="#374151", font=rozet_yazi, padding=rozet_bosluk)
-        style.configure("ProjeRozet.TLabel", background="#e2e8f0", foreground="#334155", font=rozet_yazi, padding=rozet_bosluk)
-        style.configure("ProjeAdi.TLabel", background="#f8fafc", foreground="#0f172a", font=("Segoe UI", 18, "bold"))
-        style.configure("ProjeKonum.TLabel", background="#f8fafc", foreground="#475569", font=("Segoe UI", 11))
-        style.configure("ProjeAdaParsel.TLabel", background="#f8fafc", foreground="#991b1b", font=("Segoe UI", 17, "bold"))
-        style.configure("ProjeHaritaDurum.TLabel", background="#f8fafc", foreground="#92400e", font=("Segoe UI", 10, "bold"))
+        rozet_yazi = ("Segoe UI", 10, "bold")
+        rozet_bosluk = (11, 7)
+        style.configure("ProjeOnDegerVar.TLabel", background=renk["yuzey_ikincil"], foreground=renk["metin"], font=rozet_yazi, padding=rozet_bosluk)
+        style.configure("ProjeOnDegerYok.TLabel", background=renk["yuzey_ikincil"], foreground=renk["metin_ikincil"], font=rozet_yazi, padding=rozet_bosluk)
+        style.configure("ProjeRozet.TLabel", background=renk["yuzey_ikincil"], foreground=renk["metin_ikincil"], font=rozet_yazi, padding=rozet_bosluk)
+        style.configure("ProjeAdi.TLabel", background=renk["zemin"], foreground=renk["metin"], font=("Segoe UI", 18, "bold"))
+        style.configure("ProjeKonum.TLabel", background=renk["zemin"], foreground=renk["metin_ikincil"], font=("Segoe UI", 11))
+        style.configure("ProjeAdaParsel.TLabel", background=renk["zemin"], foreground=renk["vurgu"], font=("Segoe UI", 16, "bold"))
+        style.configure("ProjeHaritaDurum.TLabel", background=renk["zemin"], foreground=renk["metin_ikincil"], font=("Segoe UI", 10, "bold"))
 
     def proje_ozet_sekmesi_olustur(self):
         self._serit_stillerini_hazirla()
@@ -179,14 +183,13 @@ class ProjeDurumuIslemleri:
         page = ttk.Frame(frame, padding=22, style="ProjeOzet.TFrame")
         page.pack(fill="both", expand=True)
 
-        ttk.Label(page, text="PROJE ÖZETİ", style="Baslik.TLabel").pack(anchor="w", pady=(0, 12))
         self.lbl_proje_asama = ttk.Label(
             page,
             textvariable=self.proje_asama_var,
             style="ProjeAsama.yeni.TLabel",
             anchor="center",
         )
-        self.lbl_proje_asama.pack(fill="x")
+        self.lbl_proje_asama.pack(fill="x", pady=(0, 4))
         self.lbl_proje_kimligi = ttk.Label(
             page,
             textvariable=self.proje_kimligi_var,
@@ -219,7 +222,6 @@ class ProjeDurumuIslemleri:
             self.proje_haritali_ozet_frame,
             text="Parsel Uydu Görüntüsü",
             padding=(10, 8),
-            bootstyle="secondary",
         )
         self.proje_harita_cercevesi.pack(fill="both", expand=True)
         self.lbl_proje_harita = tk.Label(
@@ -242,7 +244,7 @@ class ProjeDurumuIslemleri:
             self.proje_harita_cercevesi,
             text="Parsel Haritası Hazırla",
             command=self._ozetten_parsel_haritasi_hazirla,
-            bootstyle="warning",
+            style="Secondary.TButton",
         )
 
         rozetler = ttk.Frame(page, style="ProjeOzet.TFrame")
@@ -259,7 +261,7 @@ class ProjeDurumuIslemleri:
             page,
             text="Aşamayı Değiştir",
             command=self.is_asamasini_belirle,
-            bootstyle="primary",
+            style="Primary.TButton",
             width=22,
         )
         self.btn_asama_degistir.pack(anchor="center")
@@ -373,22 +375,21 @@ class ProjeDurumuIslemleri:
             return
         if harita_durumu["kod"] == "kml_yok":
             self.btn_proje_harita_islem.configure(
-                text="Haritalar Sekmesine Git", command=self._haritalar_sekmesine_git, bootstyle="secondary"
+                text="Haritalar Sekmesine Git",
+                command=self._haritalar_sekmesine_git,
+                style="Secondary.TButton",
             )
         else:
             self.btn_proje_harita_islem.configure(
                 text="Parsel Haritası Hazırla",
                 command=self._ozetten_parsel_haritasi_hazirla,
-                bootstyle="warning",
+                style="Secondary.TButton",
             )
         self.btn_proje_harita_islem.pack(pady=(0, 10))
 
     def proje_durum_seridi_guncelle(self, kaydedilmedi=None):
         if kaydedilmedi is None:
-            try:
-                kaydedilmedi = bool(self.kaydedilmemis_degisiklik_var_mi())
-            except Exception:
-                kaydedilmedi = False
+            kaydedilmedi = bool(getattr(self, "_proje_kirli", False))
         ozet = proje_durum_ozeti_hazirla(
             self._mevcut_proje_ozet_verisi(),
             salt_okunur=getattr(self, "proje_salt_okunur", False),
@@ -419,6 +420,16 @@ class ProjeDurumuIslemleri:
             pass
 
     def proje_durumu_yenilemeyi_planla(self, _event=None):
+        olay_tipi = str(getattr(_event, "type", "")) if _event is not None else ""
+        widget_sinifi = ""
+        if _event is not None and getattr(_event, "widget", None) is not None:
+            try:
+                widget_sinifi = str(_event.widget.winfo_class())
+            except (AttributeError, tk.TclError):
+                pass
+        sekme_tiklamasi = olay_tipi == "5" and widget_sinifi in {"TNotebook", "Notebook"}
+        if olay_tipi not in {"", "35"} and not sekme_tiklamasi:
+            self._proje_kirli = True
         onceki = getattr(self, "_proje_durumu_after_id", None)
         if onceki:
             try:
@@ -426,13 +437,13 @@ class ProjeDurumuIslemleri:
             except tk.TclError:
                 pass
         try:
-            self._proje_durumu_after_id = self.root.after(300, self._planlanan_proje_durumu_yenile)
+            self._proje_durumu_after_id = self.root.after(160, self._planlanan_proje_durumu_yenile)
         except tk.TclError:
             self._proje_durumu_after_id = None
 
     def _planlanan_proje_durumu_yenile(self):
         self._proje_durumu_after_id = None
-        self.proje_durum_seridi_guncelle()
+        self.proje_durum_seridi_guncelle(kaydedilmedi=bool(getattr(self, "_proje_kirli", False)))
 
     def _proje_durumu_eventlerini_bagla(self):
         for olay in ("<KeyRelease>", "<ButtonRelease-1>", "<<ComboboxSelected>>", "<<NotebookTabChanged>>"):

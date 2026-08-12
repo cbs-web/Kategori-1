@@ -3,6 +3,7 @@ import math
 import os
 import re
 import unicodedata
+from bisect import bisect_right
 from copy import deepcopy
 import tempfile
 import tkinter as tk
@@ -1173,25 +1174,28 @@ class RaporUretici:
                     self.rapor_hucre_yazi_stili_uygula(cell, bold=False, renk="000000", punto=punto)
                 self.rapor_hucre_kenarlik_ayarla(cell)
 
-    def rapor_metin_degistir(self, doc, tag, value):
-        val_str = str(value)
-        for p in self.docx_paragraflarini_dolas(doc):
-            if tag in p.text:
-                replaced = False
-                for run in p.runs:
-                    if tag in run.text:
-                        run.text = run.text.replace(tag, val_str)
-                        replaced = True
-                if not replaced:
-                    full_text = "".join(r.text for r in p.runs)
-                    if tag in full_text and p.runs:
-                        p.runs[0].text = full_text.replace(tag, val_str)
-                        for r in p.runs[1:]:
-                            r.text = ""
-        self.rapor_xml_metin_degistir(doc, tag, val_str)
+    def _rapor_etiket_deseni_hazirla(self, degisim_sozlugu):
+        degisimler = {
+            str(etiket): str(deger)
+            for etiket, deger in dict(degisim_sozlugu or {}).items()
+            if str(etiket)
+        }
+        if not degisimler:
+            return None, {}
+        etiketler = sorted(degisimler, key=len, reverse=True)
+        return re.compile("|".join(re.escape(etiket) for etiket in etiketler)), degisimler
 
-    def rapor_xml_metin_degistir(self, doc, tag, value):
-        val_str = str(value)
+    def _rapor_xml_metin_ata(self, dugum, metin):
+        metin = str(metin)
+        dugum.text = metin
+        bosluk_ozelligi = "{http://www.w3.org/XML/1998/namespace}space"
+        if metin[:1].isspace() or metin[-1:].isspace():
+            dugum.set(bosluk_ozelligi, "preserve")
+        else:
+            dugum.attrib.pop(bosluk_ozelligi, None)
+
+    def _rapor_xml_metinleri_toplu_degistir(self, doc, desen, degisimler):
+        degisim_sayisi = 0
         for part in doc.part.package.parts:
             partname = str(getattr(part, "partname", ""))
             if not partname.startswith("/word/") or not hasattr(part, "element"):
@@ -1200,37 +1204,128 @@ class RaporUretici:
                 dugumler = list(part.element.xpath(".//w:t"))
             except Exception:
                 continue
-            arama_baslangici = 0
-            while dugumler:
-                parcalar = [dugum.text or "" for dugum in dugumler]
-                birlesik = "".join(parcalar)
-                baslangic = birlesik.find(tag, arama_baslangici)
-                if baslangic < 0:
-                    break
-                bitis = baslangic + len(tag)
-                konum = 0
-                ilk = son = None
-                ilk_ofset = son_ofset = 0
-                for index, parca in enumerate(parcalar):
-                    sonraki = konum + len(parca)
-                    if ilk is None and baslangic < sonraki:
-                        ilk = index
-                        ilk_ofset = baslangic - konum
-                    if ilk is not None and bitis <= sonraki:
-                        son = index
-                        son_ofset = bitis - konum
-                        break
-                    konum = sonraki
-                if ilk is None or son is None:
-                    break
+            if not dugumler:
+                continue
+
+            parcalar = [dugum.text or "" for dugum in dugumler]
+            birlesik = "".join(parcalar)
+            eslesmeler = list(desen.finditer(birlesik))
+            if not eslesmeler:
+                continue
+
+            bitisler = []
+            toplam = 0
+            for parca in parcalar:
+                toplam += len(parca)
+                bitisler.append(toplam)
+
+            # Sağdan sola çalışmak, bir değişimin kendisinden önceki özgün
+            # karakter ofsetlerini kaydırmasını engeller.
+            for eslesme in reversed(eslesmeler):
+                baslangic, bitis = eslesme.span()
+                ilk = bisect_right(bitisler, baslangic)
+                son = bisect_right(bitisler, bitis - 1)
+                if ilk >= len(dugumler) or son >= len(dugumler):
+                    continue
+                ilk_baslangici = bitisler[ilk] - len(parcalar[ilk])
+                son_baslangici = bitisler[son] - len(parcalar[son])
+                ilk_ofset = baslangic - ilk_baslangici
+                son_ofset = bitis - son_baslangici
+                val_str = degisimler[eslesme.group(0)]
                 if ilk == son:
-                    dugumler[ilk].text = parcalar[ilk][:ilk_ofset] + val_str + parcalar[ilk][son_ofset:]
+                    mevcut = dugumler[ilk].text or ""
+                    self._rapor_xml_metin_ata(
+                        dugumler[ilk],
+                        mevcut[:ilk_ofset] + val_str + mevcut[son_ofset:],
+                    )
                 else:
-                    dugumler[ilk].text = parcalar[ilk][:ilk_ofset] + val_str
+                    ilk_metin = dugumler[ilk].text or ""
+                    son_metin = dugumler[son].text or ""
+                    self._rapor_xml_metin_ata(
+                        dugumler[ilk],
+                        ilk_metin[:ilk_ofset] + val_str,
+                    )
                     for index in range(ilk + 1, son):
-                        dugumler[index].text = ""
-                    dugumler[son].text = parcalar[son][son_ofset:]
-                arama_baslangici = baslangic + len(val_str)
+                        self._rapor_xml_metin_ata(dugumler[index], "")
+                    self._rapor_xml_metin_ata(dugumler[son], son_metin[son_ofset:])
+                degisim_sayisi += 1
+        return degisim_sayisi
+
+    def rapor_metinleri_toplu_degistir(self, doc, degisim_sozlugu):
+        """Word etiketlerini belgeyi etiket başına yeniden taramadan değiştirir.
+
+        Normal paragraflar önce tek geçişte ele alınır; böylece tek bir run
+        içindeki etiketin mevcut karakter biçimi korunur. Run'lara bölünmüş
+        etiketler ile metin kutusu gibi python-docx'in paragraf API'sinde
+        görünmeyen parçalar, ardından Word XML'i üzerinde tek geçişte çözülür.
+        """
+        desen, degisimler = self._rapor_etiket_deseni_hazirla(degisim_sozlugu)
+        if desen is None:
+            return 0
+
+        degisim_sayisi = 0
+        gorulen_paragraflar = set()
+        for paragraf in self.docx_paragraflarini_dolas(doc):
+            paragraf_kimligi = id(paragraf._p)
+            if paragraf_kimligi in gorulen_paragraflar:
+                continue
+            gorulen_paragraflar.add(paragraf_kimligi)
+
+            runlar = list(paragraf.runs)
+            if not runlar:
+                continue
+            tam_metin = "".join(run.text for run in runlar)
+            eslesmeler = list(desen.finditer(tam_metin))
+            if not eslesmeler:
+                continue
+
+            parcalar = [run.text for run in runlar]
+            bitisler = []
+            toplam = 0
+            for parca in parcalar:
+                toplam += len(parca)
+                bitisler.append(toplam)
+
+            for eslesme in reversed(eslesmeler):
+                baslangic, bitis = eslesme.span()
+                ilk = bisect_right(bitisler, baslangic)
+                son = bisect_right(bitisler, bitis - 1)
+                if ilk >= len(runlar) or son >= len(runlar):
+                    continue
+                ilk_baslangici = bitisler[ilk] - len(parcalar[ilk])
+                son_baslangici = bitisler[son] - len(parcalar[son])
+                ilk_ofset = baslangic - ilk_baslangici
+                son_ofset = bitis - son_baslangici
+                val_str = degisimler[eslesme.group(0)]
+                if ilk == son:
+                    mevcut = runlar[ilk].text
+                    runlar[ilk].text = mevcut[:ilk_ofset] + val_str + mevcut[son_ofset:]
+                else:
+                    ilk_metin = runlar[ilk].text
+                    son_metin = runlar[son].text
+                    runlar[ilk].text = ilk_metin[:ilk_ofset] + val_str
+                    for index in range(ilk + 1, son):
+                        runlar[index].text = ""
+                    runlar[son].text = son_metin[son_ofset:]
+                degisim_sayisi += 1
+
+        # Hiperbağ, metin kutusu ve diğer ham Word parçalarında kalmış ya da
+        # farklı XML metin düğümlerine bölünmüş etiketleri tamamlar.
+        degisim_sayisi += self._rapor_xml_metinleri_toplu_degistir(
+            doc,
+            desen,
+            degisimler,
+        )
+        return degisim_sayisi
+
+    def rapor_metin_degistir(self, doc, tag, value):
+        return self.rapor_metinleri_toplu_degistir(doc, {tag: value})
+
+    def rapor_xml_metin_degistir(self, doc, tag, value):
+        desen, degisimler = self._rapor_etiket_deseni_hazirla({tag: value})
+        if desen is None:
+            return 0
+        return self._rapor_xml_metinleri_toplu_degistir(doc, desen, degisimler)
 
     def rapor_deger_formatla(self, v):
         if pd.isna(v):
@@ -1506,10 +1601,12 @@ class RaporUretici:
         cok_satirli_etiketler = {
             "[FORMASYON]": fm_metin,
         }
-        for eski, yeni in degisim_sozlugu.items():
-            if eski in cok_satirli_etiketler:
-                continue
-            self.rapor_metin_degistir(doc, eski, yeni)
+        tek_satirli_etiketler = {
+            eski: yeni
+            for eski, yeni in degisim_sozlugu.items()
+            if eski not in cok_satirli_etiketler
+        }
+        self.rapor_metinleri_toplu_degistir(doc, tek_satirli_etiketler)
         for eski, yeni in cok_satirli_etiketler.items():
             self.rapor_cok_satirli_etiket_degistir(doc, eski, yeni)
 

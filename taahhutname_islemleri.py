@@ -279,7 +279,7 @@ class TaahhutnameIslemleri:
         ]
 
     def taahhut_bilgilerini_duzenle(self, kaydedilince=None):
-        pencere = tk.Toplevel(self.root)
+        pencere = self.animasyonlu_pencere()
         pencere.title("Taahhütname Mühendis Bilgileri")
         pencere.transient(self.root)
         pencere.grab_set()

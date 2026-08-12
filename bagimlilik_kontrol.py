@@ -1,5 +1,6 @@
 import importlib
 import importlib.metadata
+import importlib.util
 import re
 import subprocess
 import sys
@@ -39,14 +40,20 @@ def surum_yeterli_mi(mevcut, minimum):
     return bool(mevcut_parcalar) and mevcut_parcalar >= minimum_parcalar
 
 
-def paketleri_kontrol_et(paketler):
+def paketleri_kontrol_et(paketler, *, ice_aktar=False):
+    """Paket varlığı/sürümünü hızlı denetler; ağır import isteğe bağlıdır."""
     sorunlar = []
     for paket_adi, (modul_adi, minimum_surum) in paketler.items():
-        try:
-            importlib.import_module(modul_adi)
-        except Exception as hata:
-            sorunlar.append((paket_adi, f"ice aktarilamadi: {hata}"))
+        if importlib.util.find_spec(modul_adi) is None:
+            sorunlar.append((paket_adi, "kurulu modul bulunamadi"))
             continue
+
+        if ice_aktar:
+            try:
+                importlib.import_module(modul_adi)
+            except Exception as hata:
+                sorunlar.append((paket_adi, f"ice aktarilamadi: {hata}"))
+                continue
 
         try:
             mevcut_surum = importlib.metadata.version(paket_adi)
@@ -88,6 +95,8 @@ def tkinter_kontrol_et():
 
 
 def main():
+    # Uygulama modülleri gerçek kullanımda içe aktarılır. Başlangıç kontrolü
+    # yalnız kurulum/sürüm metadata'sını okur ve ağır paketleri ikinci kez yüklemez.
     sorunlu_zorunlu = paketleri_kontrol_et(ZORUNLU_PAKETLER)
     sorunlu_opsiyonel = paketleri_kontrol_et(OPSIYONEL_PAKETLER)
     tkinter_sorunu = tkinter_kontrol_et()

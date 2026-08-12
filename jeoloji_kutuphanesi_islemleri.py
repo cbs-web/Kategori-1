@@ -79,7 +79,7 @@ class JeolojiKutuphanesiIslemleri:
         except tk.TclError:
             pass
 
-        pencere = tk.Toplevel(self.root)
+        pencere = self.animasyonlu_pencere()
         self._jeoloji_kutuphanesi_penceresi = pencere
         pencere.title("Çanakkale Jeoloji Kütüphanesi")
         pencere.geometry("1180x760")
@@ -398,7 +398,7 @@ class JeolojiKutuphanesiIslemleri:
             return None
         if len(adaylar) == 1:
             return adaylar[0]
-        pencere = tk.Toplevel(self._jeoloji_kutuphanesi_penceresi)
+        pencere = self.animasyonlu_pencere(self._jeoloji_kutuphanesi_penceresi)
         pencere.title(baslik)
         pencere.geometry("760x380")
         pencere.transient(self._jeoloji_kutuphanesi_penceresi)
@@ -432,7 +432,7 @@ class JeolojiKutuphanesiIslemleri:
         return secim["aday"]
 
     def _klasor_onizleme_onayi(self, klasor, word_sonucu, kml_adayi):
-        pencere = tk.Toplevel(self._jeoloji_kutuphanesi_penceresi)
+        pencere = self.animasyonlu_pencere(self._jeoloji_kutuphanesi_penceresi)
         pencere.title("Klasör Aktarımını Kontrol Et")
         pencere.geometry("820x620")
         pencere.transient(self._jeoloji_kutuphanesi_penceresi)
@@ -563,7 +563,7 @@ class JeolojiKutuphanesiIslemleri:
 
     def _arka_plan_gorevi(self, baslik, islem, tamamlandi):
         """Uzun dosya taramalarını Tk ana döngüsünü kilitlemeden çalıştırır."""
-        pencere = tk.Toplevel(self._jeoloji_kutuphanesi_penceresi)
+        pencere = self.animasyonlu_pencere(self._jeoloji_kutuphanesi_penceresi)
         pencere.title(baslik)
         pencere.geometry("560x170")
         pencere.resizable(False, False)
@@ -667,7 +667,7 @@ class JeolojiKutuphanesiIslemleri:
                 eski.destroy()
         except tk.TclError:
             pass
-        pencere = tk.Toplevel(self._jeoloji_kutuphanesi_penceresi)
+        pencere = self.animasyonlu_pencere(self._jeoloji_kutuphanesi_penceresi)
         self._jeoloji_toplu_onizleme_penceresi = pencere
         self._jeoloji_toplu_projeler = projeler
         pencere.title("İlçe Klasöründen Toplu Jeoloji Aktarımı")
@@ -904,7 +904,7 @@ class JeolojiKutuphanesiIslemleri:
         ]
         degerler = list(dict.fromkeys((*adaylar, *katalog)))
 
-        pencere = tk.Toplevel(self._jeoloji_toplu_onizleme_penceresi)
+        pencere = self.animasyonlu_pencere(self._jeoloji_toplu_onizleme_penceresi)
         pencere.title("Formasyonu Belirle")
         pencere.geometry("590x205")
         pencere.resizable(False, False)
@@ -1632,7 +1632,7 @@ class JeolojiKutuphanesiIslemleri:
                 eski.destroy()
         except tk.TclError:
             pass
-        pencere = tk.Toplevel(self.root)
+        pencere = self.animasyonlu_pencere()
         self._jeoloji_harita_detay_penceresi = pencere
         pencere.title(f"Jeoloji Raporu #{record['id']}")
         pencere.geometry("680x560")

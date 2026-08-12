@@ -1031,10 +1031,14 @@ class KayitYoneticisi:
     def kaydedilmemis_degisiklik_var_mi(self):
         if getattr(self, "proje_salt_okunur", False):
             return False
+        if not getattr(self, "_proje_kirli", False):
+            return False
         son_kayit = getattr(self, "son_kayit_verisi", None)
         if son_kayit is None:
             return False
-        return son_kayit != self.verileri_topla()
+        farkli = son_kayit != self.verileri_topla()
+        self._proje_kirli = bool(farkli)
+        return farkli
 
     def degisiklik_gecisine_izin_ver(self, eylem):
         if not self.kaydedilmemis_degisiklik_var_mi():
@@ -1111,6 +1115,7 @@ class KayitYoneticisi:
             self.son_kayit_verisi = (
                 kaynak_temiz_veriler if asama_degisti else copy.deepcopy(self.verileri_topla())
             )
+            self._proje_kirli = bool(asama_degisti)
             if hasattr(self, "proje_salt_okunur_ayarla"):
                 self.proje_salt_okunur_ayarla(salt_okunur_ac)
             self.son_proje_ekle(tam_yol)
@@ -1646,6 +1651,7 @@ class KayitYoneticisi:
             self.guncel_dosya_yolu = None
             self.root.title("K-1 - Yeni Proje")
             self.son_kayit_verisi = copy.deepcopy(self.verileri_topla())
+            self._proje_kirli = False
             if hasattr(self, "proje_durum_seridi_guncelle"):
                 self.proje_durum_seridi_guncelle(kaydedilmedi=False)
             if hasattr(self, "durum_mesaji_yaz"):
@@ -1683,6 +1689,7 @@ class KayitYoneticisi:
                 kayit_verileri = self.proje_yollarini_kayda_hazirla(veriler, self.guncel_dosya_yolu)
                 self.atomik_json_yaz(self.guncel_dosya_yolu, kayit_verileri)
                 self.son_kayit_verisi = copy.deepcopy(veriler)
+                self._proje_kirli = False
                 self.son_proje_ekle(self.guncel_dosya_yolu)
                 if hasattr(self, "is_takibi_kaydi_guncelle"):
                     self.is_takibi_kaydi_guncelle(self.guncel_dosya_yolu, veriler)
@@ -1725,6 +1732,7 @@ class KayitYoneticisi:
             self.guncel_dosya_yolu = tam_yol
             self.root.title(f"K-1 - {tam_yol}")
             self.son_kayit_verisi = copy.deepcopy(veriler)
+            self._proje_kirli = False
             self.son_proje_ekle(tam_yol)
             if hasattr(self, "is_takibi_kaydi_guncelle"):
                 self.is_takibi_kaydi_guncelle(tam_yol, veriler)

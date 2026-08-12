@@ -165,13 +165,13 @@ class RaporlamaIslemleri:
         ttk.Label(page, text="Raporlama", style="Baslik.TLabel").pack(anchor="w", pady=(0, 10))
         ttk.Separator(page).pack(fill="x", pady=(0, 12))
 
-        akis = ttk.LabelFrame(page, text="Rapor İş Akışı", padding=(12, 10), bootstyle="secondary")
+        akis = ttk.LabelFrame(page, text="Rapor İş Akışı", padding=(12, 10))
         akis.pack(fill="x", pady=(0, 12))
-        ttk.Button(akis, text="1. Şablon Seç", command=self.sablon_sec, bootstyle="secondary").pack(side="left", padx=(0, 8))
-        ttk.Button(akis, text="2. Ön Kontrol", command=self.rapor_on_kontrol, bootstyle="warning").pack(side="left", padx=(0, 8))
-        ttk.Button(akis, text="3. Şablonu Kontrol Et", command=self.sablon_kontrol_et, bootstyle="info").pack(side="left", padx=(0, 8))
-        ttk.Button(akis, text="4. Raporu Oluştur", command=self.rapor_olustur, bootstyle="success").pack(side="left", padx=(0, 8))
-        ttk.Button(akis, text="5. Nihai PDF Oluştur", command=self.nihai_rapor_pdf_olustur, bootstyle="success outline").pack(side="left")
+        ttk.Button(akis, text="1. Şablon Seç", command=self.sablon_sec, style="Secondary.TButton").pack(side="left", padx=(0, 8))
+        ttk.Button(akis, text="2. Ön Kontrol", command=self.rapor_on_kontrol, style="Secondary.TButton").pack(side="left", padx=(0, 8))
+        ttk.Button(akis, text="3. Şablonu Denetle", command=self.sablon_kontrol_et, style="Secondary.TButton").pack(side="left", padx=(0, 8))
+        ttk.Button(akis, text="4. Word Raporu Oluştur", command=self.rapor_olustur, style="Primary.TButton").pack(side="left", padx=(0, 8))
+        ttk.Button(akis, text="5. Nihai PDF", command=self.nihai_rapor_pdf_olustur, style="Secondary.TButton").pack(side="left")
 
         sablon_frame = ttk.LabelFrame(page, text="Word Şablonu", padding=(12, 10), bootstyle="secondary")
         sablon_frame.pack(fill="x")
@@ -363,7 +363,8 @@ class RaporlamaIslemleri:
                 self.on_deger_ekranini_guncelle()
             if hasattr(self, "durum_mesaji_yaz"):
                 self.durum_mesaji_yaz("Rapor oluşturuldu")
-            messagebox.showinfo("Başarı", f"Raporunuz {kayit_yolu} konumuna başarıyla kaydedildi!")
+            if hasattr(self, "durum_mesaji_yaz"):
+                self.durum_mesaji_yaz("Word raporu oluşturuldu", kayit_yolu)
         except ImportError as e:
             self.hata_kaydet("Rapor oluşturma için python-docx bulunamadı", e)
             messagebox.showerror("Hata", "python-docx kütüphanesi gerekli.")

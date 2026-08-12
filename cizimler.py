@@ -689,7 +689,7 @@ class CizimUretici:
         return result
 
     def parsel_haritasi_onizleme_onayi(self, image):
-        pencere = tk.Toplevel(self.root)
+        pencere = self.animasyonlu_pencere()
         pencere.title("Parsel Haritası Önizlemesi")
         pencere.transient(self.root)
         pencere.grab_set()
@@ -800,7 +800,8 @@ class CizimUretici:
         self.parsel_haritasi_parsel = self.proje_degeri("PARSEL", "")
         if hasattr(self, "proje_durum_seridi_guncelle"):
             self.proje_durum_seridi_guncelle()
-        messagebox.showinfo("Parsel Haritası", f"Parsel haritası kaydedildi:\n{path}")
+        if hasattr(self, "durum_mesaji_yaz"):
+            self.durum_mesaji_yaz(f"Parsel haritası kaydedildi: {os.path.basename(path)}")
         return True
 
     def resim_cek_ve_isaj_ekle(self, path, ac_yn_goster, ss_goster, baslik="MÜHENDİSLİK JEOLOJİSİ HARİTASI", a4_format=True):
@@ -1070,10 +1071,8 @@ class CizimUretici:
         self.img_jeofizik_lok = img_jeofizik_lok
         self.img_jeoloji_lok = img_jeoloji_lok
         if secim == "kullan":
-            messagebox.showinfo(
-                "Haritalar Hazır",
-                "Mevcut 3 harita dosyası yeniden oluşturulmadan projeye bağlandı.",
-            )
+            if hasattr(self, "durum_mesaji_yaz"):
+                self.durum_mesaji_yaz("Mevcut 3 harita projeye bağlandı")
             return
 
         self._harita_disari_aktarim_aktif = True
@@ -1084,7 +1083,8 @@ class CizimUretici:
             self.resim_cek_ve_isaj_ekle(self.img_jeoloji_lok, True, False, "JEOLOJİ LOKASYON HARİTASI", a4_format=False)
             
             self.sil_ve_yeniden_ciz(True, True, True)
-            messagebox.showinfo("Başarılı", f"3 Yerel Harita '{kayit_klasoru}' klasörüne yüksek kalitede üretildi ve hafızaya alındı!")
+            if hasattr(self, "durum_mesaji_yaz"):
+                self.durum_mesaji_yaz("3 yerel harita hazırlandı", kayit_klasoru)
         except Exception as e:
             self.hata_kaydet("Harita görüntüleri hazırlanırken hata oluştu", e)
             self.sil_ve_yeniden_ciz(True, True, True)
@@ -1110,10 +1110,8 @@ class CizimUretici:
             return
         self.img_yerbulduru = img_yerbulduru
         if secim == "kullan":
-            messagebox.showinfo(
-                "Yerbulduru Haritası Hazır",
-                "Mevcut yerbulduru haritası yeniden oluşturulmadan projeye bağlandı.",
-            )
+            if hasattr(self, "durum_mesaji_yaz"):
+                self.durum_mesaji_yaz("Mevcut yerbulduru haritası projeye bağlandı")
             return
         
         try:
@@ -1158,7 +1156,8 @@ class CizimUretici:
                 self.map_widget.set_position(mevcut_konum[0], mevcut_konum[1])
                 self.map_widget.set_zoom(mevcut_zoom_int)
             self.sil_ve_yeniden_ciz(True, True, True)
-            messagebox.showinfo("Başarılı", f"Proje merkezli geniş ve yakın görünümlerle Yerbulduru Haritası '{kayit_klasoru}' klasörüne kaydedildi ve hafızaya alındı!")
+            if hasattr(self, "durum_mesaji_yaz"):
+                self.durum_mesaji_yaz("Yerbulduru haritası hazırlandı", kayit_klasoru)
         except Exception as e:
             self.hata_kaydet("Yerbulduru haritası hazırlanırken hata oluştu", e)
             if mevcut_konum:
@@ -1217,7 +1216,8 @@ class CizimUretici:
                 + "\n".join(hatali[:8]),
             )
         else:
-            messagebox.showinfo("Başarılı", f"Toplam {basarili} adet Log Görüntüsü başarıyla oluşturuldu!\n\nKlasör: {kayit_klasoru}")
+            if hasattr(self, "durum_mesaji_yaz"):
+                self.durum_mesaji_yaz(f"{basarili} log görüntüsü hazırlandı", kayit_klasoru)
 
     def tekil_log_ciz(self, kayit, isim, kayit_yolu):
         derinlik = kayit["derinlik_entry"].get()
