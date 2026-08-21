@@ -90,6 +90,30 @@ def laboratuvar_numune_anahtari(value):
     return _lab_no_normalize(value)
 
 
+def laboratuvar_numune_etiketlerini_uyarla(satirlar, bilinen_etiketler):
+    """Gelen satırlardaki numune adlarını projedeki görünen etiketlere uyarla.
+
+    Örneğin projede ``AÇ1`` bulunurken laboratuvar dosyası ``AÇ-1``
+    getirirse teknik anahtarları aynı olduğundan satırda projenin ``AÇ1``
+    yazımı korunur.
+    """
+    etiket_by_anahtar = {}
+    for etiket in bilinen_etiketler or []:
+        anahtar = laboratuvar_numune_anahtari(etiket)
+        if anahtar and anahtar not in etiket_by_anahtar:
+            etiket_by_anahtar[anahtar] = etiket
+
+    sonuc = []
+    for satir in satirlar or []:
+        degerler = list(satir)
+        if degerler:
+            anahtar = laboratuvar_numune_anahtari(degerler[0])
+            if anahtar in etiket_by_anahtar:
+                degerler[0] = etiket_by_anahtar[anahtar]
+        sonuc.append(tuple(degerler))
+    return sonuc
+
+
 def _lab_kayit_tipi(no):
     normalized = _lab_no_normalize(no)
     if normalized.startswith("AC"):

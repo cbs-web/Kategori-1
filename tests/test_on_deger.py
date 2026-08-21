@@ -7,6 +7,7 @@ from on_deger import (
     on_deger_durumu,
     on_deger_revizyonu_ekle,
     tdth_kaydi_etkinlestir,
+    tdth_sayisal_degerleri_oku,
     tdth_zemin_sinifi_guncelle,
 )
 
@@ -46,6 +47,35 @@ def test_zemin_sinifi_degisiminde_tdth_yenilenmeli_olur():
 
     assert tdth["durum"] == "yenilenmeli"
     assert tdth["aktif"]["zemin_sinifi"] == "ZD"
+
+
+def test_tdth_ozet_raporu_ayni_satirdaki_sds_ve_sd1_degerlerini_okur():
+    metin = """
+    SS = 0.712 S1 = 0.202 SDS = 0.865 SD1 = 0.303
+    PGA = 0.301 PGV = 18.370
+    SD1 : 1.0 saniye periyot için tasarım spektral ivme katsayısıdır.
+    """
+
+    assert tdth_sayisal_degerleri_oku(metin) == {
+        "PGA": "0.301",
+        "PGV": "18.370",
+        "SS": "0.712",
+        "S1": "0.202",
+        "SDS": "0.865",
+        "SD1": "0.303",
+    }
+
+
+def test_tdth_detay_raporunda_formulun_sonucunu_korumaya_devam_eder():
+    metin = """
+    SDS = SS FS = 0.723 x 1.222 = 0.883
+    SD1 = S1 F1 = 0.221 x 2.158 = 0.477
+    """
+
+    degerler = tdth_sayisal_degerleri_oku(metin)
+
+    assert degerler["SDS"] == "0.883"
+    assert degerler["SD1"] == "0.477"
 
 
 def test_yeni_is_on_deger_olmadan_dogrudan_yazima_gecebilir():

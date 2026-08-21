@@ -286,6 +286,26 @@ def test_legacy_harita_isaretleri_widget_referansi_olmadan_migrate_edilir(yoneti
     }
 
 
+def test_hassas_harita_zoomu_kesirli_kaydedilir_ve_eski_tam_zoom_korunur(yonetici):
+    hassas = yonetici.proje_verisini_normalize_et({
+        "__HARITA__": {
+            "zoom": 15.25,
+            "parsel_odak_aktif": True,
+            "parsel_odak_geri_gorunumu": {
+                "lat": 39.524,
+                "lon": 26.12,
+                "zoom": 14.75,
+            },
+        }
+    })
+    eski = yonetici.proje_verisini_normalize_et({"__HARITA__": {"zoom": 15}})
+
+    assert hassas["__HARITA__"]["zoom"] == 15.25
+    assert hassas["__HARITA__"]["parsel_odak_aktif"] is True
+    assert hassas["__HARITA__"]["parsel_odak_geri_gorunumu"]["zoom"] == 14.75
+    assert eski["__HARITA__"]["zoom"] == 15.0
+
+
 def test_tasima_rapor_imzasi_json_listesinden_canonical_tuple_olarak_yuklenir(yonetici):
     sonuc = yonetici.proje_verisini_normalize_et({
         "_TASIMA_": {
@@ -326,6 +346,59 @@ def test_taahhut_bilgileri_normalize_topla_ve_yerlestir_round_trip(yonetici):
     assert toplanan["JEOLOJI_MUH_AD"] == "Jeoloji İmza"
     assert toplanan["JEOLOJI_MUH_TELEFON"] == ""
     assert "BILINMEYEN" not in toplanan
+
+
+def test_taahhut_varsayilanlari_kalici_kaydedilir_ve_yuklenir(yonetici, tmp_path):
+    bilgiler = {
+        "JEOFIZIK_MUH_AD": "Jeofizik Mühendisi",
+        "JEOFIZIK_MUH_SICIL": 1234,
+        "JEOLOJI_MUH_AD": "Jeoloji Mühendisi",
+        "BILINMEYEN": "saklanmamalı",
+    }
+
+    kaydedilen = yonetici.taahhut_varsayilanlarini_kaydet(bilgiler)
+    yuklenen = yonetici.taahhut_varsayilanlarini_yukle()
+
+    assert kaydedilen == yuklenen
+    assert yuklenen["JEOFIZIK_MUH_AD"] == "Jeofizik Mühendisi"
+    assert yuklenen["JEOFIZIK_MUH_SICIL"] == "1234"
+    assert yuklenen["JEOLOJI_MUH_AD"] == "Jeoloji Mühendisi"
+    assert "BILINMEYEN" not in yuklenen
+    ham = json.loads((tmp_path / "taahhutname_varsayilanlari.json").read_text(encoding="utf-8"))
+    assert ham["surum"] == 1
+    assert ham["muhendis_bilgileri"] == yuklenen
+
+
+def test_bozuk_taahhut_varsayilan_dosyasi_bos_profile_doner(yonetici, tmp_path):
+    (tmp_path / "taahhutname_varsayilanlari.json").write_text("{bozuk", encoding="utf-8")
+
+    sonuc = yonetici.taahhut_varsayilanlarini_yukle()
+
+    assert sonuc == {kod: "" for kod in TAAHHUT_BILGI_ALANLARI}
+
+
+def test_legacy_projeyi_global_taahhut_profiliyle_tamamlar_dolu_degeri_korur(yonetici):
+    yonetici.varsayilan_proje_verisi["_TAAHHUT_BILGILERI_"] = {
+        kod: "" for kod in TAAHHUT_BILGI_ALANLARI
+    }
+    yonetici.varsayilan_proje_verisi["_TAAHHUT_BILGILERI_"].update(
+        {
+            "JEOFIZIK_MUH_AD": "Global Jeofizik",
+            "JEOLOJI_MUH_AD": "Global Jeoloji",
+        }
+    )
+
+    sonuc = yonetici.proje_verisini_normalize_et(
+        {
+            "_TAAHHUT_BILGILERI_": {
+                "JEOFIZIK_MUH_AD": "Projeye Özel Jeofizik",
+                "JEOLOJI_MUH_AD": "",
+            }
+        }
+    )
+
+    assert sonuc["_TAAHHUT_BILGILERI_"]["JEOFIZIK_MUH_AD"] == "Projeye Özel Jeofizik"
+    assert sonuc["_TAAHHUT_BILGILERI_"]["JEOLOJI_MUH_AD"] == "Global Jeoloji"
 
 
 def test_atomik_json_hatasi_mevcut_dosyayi_korur_ve_gecici_dosya_birakmaz(yonetici, tmp_path):

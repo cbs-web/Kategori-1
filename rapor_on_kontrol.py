@@ -179,6 +179,21 @@ class RaporOnKontrol:
 
         if "[JEOLOJI_BOLUMU]" in etiketler:
             genel = getattr(self, "genel_jeoloji_verisi", {})
+            if (
+                isinstance(genel, dict)
+                and genel.get("kaynak_modu") != "eski_rapor"
+                and hasattr(self, "genel_jeoloji_eksik_metinlerini_tamamla")
+            ):
+                try:
+                    tamamlama = self.genel_jeoloji_eksik_metinlerini_tamamla()
+                    tamamlananlar = tamamlama.get("tamamlanan", []) if isinstance(tamamlama, dict) else []
+                    if tamamlananlar:
+                        uyarilar.append(
+                            "2.1 Bölgesel Jeoloji metni kalıcı birim metin kütüphanesinden "
+                            "otomatik tamamlanan birimler: " + ", ".join(tamamlananlar[:12])
+                        )
+                except Exception as exc:
+                    self.hata_kaydet("2.1 Bölgesel Jeoloji metinleri otomatik tamamlanamadı", exc)
             if not isinstance(genel, dict) or not genel:
                 hatalar.append(
                     "2.1 Bölgesel Jeoloji için parsel merkezli genel jeoloji haritası ve birim listesi hazırlanmamış."
@@ -204,7 +219,11 @@ class RaporOnKontrol:
                     ]
                     if missing:
                         hatalar.append(
-                            "2.1 Bölgesel Jeoloji açıklaması eksik birimler: " + ", ".join(missing[:12])
+                            "2.1 Bölgesel Jeoloji açıklaması eksik birimler: "
+                            + ", ".join(missing[:12])
+                            + ". Haritalar sekmesinde 'Genel Jeoloji Haritası ve 2.1 Hazırla' "
+                            "ekranını açıp ilgili birimin 2.1 metnini girin veya bu birimi "
+                            "harita/2.1 kapsamından çıkarın."
                         )
                 stored_hash = str(genel.get("geometri_hash") or "")
                 current_points = getattr(self, "yuklu_kml_points", [])

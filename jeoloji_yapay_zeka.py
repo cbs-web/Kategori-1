@@ -24,7 +24,7 @@ from PIL import Image, ImageDraw, ImageFont
 from jeoloji_kutuphanesi import jeoloji_anahtari
 
 
-PROMPT_SURUMU = "2026-08-10.1"
+PROMPT_SURUMU = "2026-08-21.2"
 VARSAYILAN_AYARLAR = {
     "birincil_model": "gemini-3.6-flash",
     "ikinci_model": "gpt-5.6-sol",
@@ -431,6 +431,15 @@ Zorunlu kurallar:
 6. Yerel aday listesi yalnız zayıf bir ön tahmindir; yanlış olabilir ve cevabı ona göre zorlamamalısın.
 7. Ana parsel kodu net değilse boş metin döndür.
 
+Yanıt biçimi:
+Yalnız geçerli bir JSON nesnesi döndür; Markdown, kod çiti veya JSON dışı açıklama kullanma.
+"birimler" yalnızca haritada gerçekten görülen izinli birimleri içeren bir dizi olsun;
+hiçbir birim görülmüyorsa boş dizi döndür. Her birim nesnesinde "kod",
+"haritada_goruldu", "kanit", "guven" ve "konum_aciklamasi" alanlarını kullan.
+Üst düzeyde ayrıca "ana_parsel_kodu", "genel_guven" ve "notlar" alanları bulunmalıdır.
+"kanit" yalnızca "kod_okundu", "kod_ve_desen" veya "yalniz_desen" olabilir;
+ana parsel kodu net değilse "ana_parsel_kodu" boş metin olsun.
+
 Pafta(lar): {sheets}
 
 İzinli kod ve birimler:
@@ -472,17 +481,23 @@ GEMINI_YENIDEN_DENEME_DURUMLARI = {408, 429, 500, 502, 503, 504}
 GEMINI_AZAMI_DENEME = 3
 
 
-def _gemini_http_hatasi(code):
+def _gemini_http_hatasi(code, detail=""):
     if code == 400:
-        return "Gönderilen Gemini isteği geçersiz (HTTP 400); model ve istek ayarlarını kontrol edin."
-    if code in {401, 403}:
-        return "Gemini API anahtarı kabul edilmedi; anahtar ve yetki ayarlarını kontrol edin."
-    if code == 503:
-        return (
+        message = (
+            "Gönderilen Gemini isteği geçersiz (HTTP 400); "
+            "model ve istek ayarlarını kontrol edin."
+        )
+    elif code in {401, 403}:
+        message = "Gemini API anahtarı kabul edilmedi; anahtar ve yetki ayarlarını kontrol edin."
+    elif code == 503:
+        message = (
             "Gemini hizmeti yanıtı zamanında tamamlayamadı (HTTP 503). "
             "Bağlantınızı kontrol edip biraz sonra yeniden deneyin."
         )
-    return f"Gemini hizmeti isteği tamamlayamadı (HTTP {code}). Lütfen biraz sonra yeniden deneyin."
+    else:
+        message = f"Gemini hizmeti isteği tamamlayamadı (HTTP {code}). Lütfen biraz sonra yeniden deneyin."
+    detail = _metni_kisalt(detail, 700)
+    return f"{message}\nGemini ayrıntısı: {detail}" if detail else message
 
 
 def _post_json(
@@ -517,7 +532,12 @@ def _post_json(
                 time.sleep(min(4.0, 2 ** (attempt - 1)))
                 continue
             if retry_label == "Gemini":
-                raise JeolojiYapayZekaHatasi(_gemini_http_hatasi(exc.code)) from None
+                detail = _hata_mesaji(error_body, "")
+                if not detail and error_body:
+                    detail = error_body
+                raise JeolojiYapayZekaHatasi(
+                    _gemini_http_hatasi(exc.code, detail)
+                ) from None
             raise JeolojiYapayZekaHatasi(
                 f"API HTTP {exc.code}: {_hata_mesaji(error_body, exc.reason or 'istek reddedildi')}"
             ) from None
@@ -558,7 +578,6 @@ def _json_metnini_oku(text):
 
 
 def _gemini_cagir(package, key, model, timeout):
-    schema = _response_schema([unit["kod"] for unit in package["katalog"]])
     parts = [{"text": _prompt(package)}]
     for image in package["gorseller"]:
         parts.append({"text": f"Görsel: {image['ad']}"})
@@ -573,11 +592,15 @@ def _gemini_cagir(package, key, model, timeout):
     payload = {
         "contents": [{"role": "user", "parts": parts}],
         "generationConfig": {
-            # Gemini 3.6 ve sonraki modeller, kullanımdan kaldırılan sampling
-            # alanları gönderildiğinde HTTP 400 döndürebilir. Denetim yalnız
-            # yapılandırılmış çıktı alanlarını kullanır.
-            "responseMimeType": "application/json",
-            "responseJsonSchema": schema,
+            # Gemini 3.6 REST çağrısında JSON modu responseFormat.text ile
+            # açılır. Ayrıntılı şema yerine prompt + yerel sonuç doğrulaması
+            # kullanılır; böylece şema kısıtlarından kaynaklanan HTTP 400'ler
+            # denetimi engellemez.
+            "responseFormat": {
+                "text": {
+                    "mimeType": "APPLICATION_JSON",
+                }
+            },
         },
     }
     response = _post_json(

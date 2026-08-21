@@ -19,10 +19,15 @@ import tempfile
 import unicodedata
 
 from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.image.image import Image as _DocxImage
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from docx.opc.part import Part
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
+from docx.oxml.shape import CT_Inline
+from docx.shape import InlineShape
+from docx.shared import Cm
 from lxml import etree
 
 try:  # Tercih edilen birleştirici; kurulu değilse aşağıdaki OOXML yolu kullanılır.
@@ -137,6 +142,54 @@ class StratigrafikKesitAyirmaSonucu:
     baslangic_blok_no: int
     bitis_blok_no: int
     sekil_no: str
+
+
+@dataclass(frozen=True)
+class _StratigrafikKesitSecimi:
+    baslangic_blok_no: int
+    bitis_blok_no: int
+    sekil_no: str
+    bolgesel_bitis_blok_no: int
+    caption_blok_no: int
+    gorsel_blok_no: int
+    gorsel_blob: bytes
+    gorsel_uzantisi: str
+    gorsel_turu: str
+    gorsel_adayi: object
+
+
+@dataclass(frozen=True)
+class _StratigrafikGorselAdayi:
+    """Kesit adayı olan tek bir DrawingML raster ilişkisi."""
+
+    blok_no: int
+    tasiyici: str
+    part: object
+    drawing: object
+    blip: object
+    behind_doc: str
+    relative_from: str
+    position_offset: int | None
+
+
+# ``word_numaralandirma`` sıfır yer tutucusunu SEQ alanıyla değiştirir; nokta
+# alan sonucunun arkasında kalacağı için nihai metin ``Şekil X. ...`` olur.
+STRATIGRAFIK_KESIT_CAPTION = (
+    "Şekil 0. Çalışma alanı ve yakın çevresinin stratigrafik kesiti"
+)
+
+_INLINE_GORSEL_UZANTILARI = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/gif": ".gif",
+    "image/bmp": ".bmp",
+    "image/tiff": ".tif",
+}
+_INLINE_GORSEL_DOSYA_UZANTILARI = set(_INLINE_GORSEL_UZANTILARI.values()) | {
+    ".jpeg",
+    ".tiff",
+}
 
 
 def _anahtar(value: object) -> str:
@@ -345,6 +398,276 @@ def _blok_gorsel_iceriyor(block) -> bool:
     return any(node.tag in gorsel_etiketleri for node in block.iter())
 
 
+def _blok_inline_gorsel_iceriyor(block) -> bool:
+    """Body bloğunda Word'ün akış içi görseli var mı?"""
+    return any(node.tag == qn("wp:inline") for node in block.iter())
+
+
+def _blok_desteklenen_gorsel_tasiyicisi_var_mi(block) -> bool:
+    """Body bloğunda işleyebildiğimiz inline veya floating görsel var mı?"""
+    return any(
+        node.tag in {qn("wp:inline"), qn("wp:anchor")}
+        for node in block.iter()
+    )
+
+
+def _cizim_gorsel_adaylarini_bul(document, drawing, tasiyici: str, blok_no: int):
+    unsupported_tags = {
+        qn("c:chart"),
+        qn("w:oleObject"),
+        qn("w:pict"),
+        qn("w:object"),
+    }
+    if any(node.tag in unsupported_tags for node in drawing.iter()):
+        raise JeolojiBolumPaketiHatasi(
+            "Stratigrafik kesit çiziminde chart/OLE veya desteklenmeyen Word "
+            "nesnesi bulundu; güvenli görsel seçilemedi."
+        )
+
+    blips = list(drawing.iter(qn("a:blip")))
+    if not blips:
+        raise JeolojiBolumPaketiHatasi(
+            "Stratigrafik kesit çiziminde görsel blob'u bulunamadı; kaynak Word "
+            "güvenle dönüştürülemedi."
+        )
+
+    candidates = []
+    for blip in blips:
+        relation_id = blip.get(qn("r:embed")) or blip.get(qn("r:link"))
+        relationship = (
+            document.part.rels.get(relation_id)
+            if relation_id
+            else None
+        )
+        relation = (
+            document.part.related_parts.get(relation_id)
+            if relation_id
+            else None
+        )
+        if (
+            relationship is None
+            or relationship.reltype != RT.IMAGE
+            or relation is None
+        ):
+            raise JeolojiBolumPaketiHatasi(
+                "Stratigrafik kesit çiziminin özgün görsel ilişkisi okunamadı; "
+                "kaynak Word güvenle dönüştürülemedi."
+            )
+
+        behind_doc = ""
+        relative_from = ""
+        position_offset = None
+        if tasiyici == "anchor":
+            behind_doc = str(
+                drawing.get("behindDoc")
+                or drawing.get(qn("wp:behindDoc"))
+                or ""
+            ).strip().casefold()
+            position_v = drawing.find(qn("wp:positionV"))
+            if position_v is not None:
+                relative_from = str(
+                    position_v.get("relativeFrom")
+                    or position_v.get(qn("wp:relativeFrom"))
+                    or ""
+                ).strip().casefold()
+                position_node = position_v.find(qn("wp:posOffset"))
+                if position_node is not None:
+                    try:
+                        position_offset = int((position_node.text or "").strip())
+                    except (TypeError, ValueError):
+                        position_offset = None
+        candidates.append(
+            _StratigrafikGorselAdayi(
+                blok_no=blok_no,
+                tasiyici=tasiyici,
+                part=relation,
+                drawing=drawing,
+                blip=blip,
+                behind_doc=behind_doc,
+                relative_from=relative_from,
+                position_offset=position_offset,
+            )
+        )
+    return candidates
+
+
+def _blok_gorsel_adaylarini_bul(
+    document,
+    block,
+    blok_no: int = -1,
+    *,
+    tasiyicilar: tuple[str, ...] = ("inline", "anchor"),
+    strict: bool = False,
+):
+    """Body bloğundaki inline/anchor raster ilişkilerini metadata ile döndür."""
+    candidates = []
+    if "inline" in tasiyicilar:
+        for inline in block.iter(qn("wp:inline")):
+            candidates.extend(
+                _cizim_gorsel_adaylarini_bul(document, inline, "inline", blok_no)
+            )
+    if "anchor" in tasiyicilar:
+        for anchor in block.iter(qn("wp:anchor")):
+            candidates.extend(
+                _cizim_gorsel_adaylarini_bul(document, anchor, "anchor", blok_no)
+            )
+
+    if strict and not candidates and any(
+        node.tag in {qn("w:pict"), qn("w:object")} for node in block.iter()
+    ):
+        raise JeolojiBolumPaketiHatasi(
+            "Stratigrafik kesit paragrafında desteklenmeyen VML/OLE Word nesnesi "
+            "bulundu; güvenli raster görsel seçilemedi."
+        )
+    return candidates
+
+
+def _blok_gorsel_parcalarini_bul(document, block) -> list:
+    """Bir body bloğundaki doğrudan inline image ilişkilerini döndür.
+
+    Bu yardımcı yalnız inline şekilleri döndürür. Floating şekillerin seçim
+    önceliği, caption bağlamındaki anchor metadata'sını da değerlendiren
+    ``_blok_gorsel_adaylarini_bul`` katmanında yapılır.
+    """
+    return [
+        candidate.part
+        for candidate in _blok_gorsel_adaylarini_bul(
+            document,
+            block,
+            tasiyicilar=("inline",),
+        )
+    ]
+
+
+def _gorsel_uzantisi_ve_turu(part) -> tuple[str, str]:
+    content_type = str(getattr(part, "content_type", "") or "").casefold()
+    extension = _INLINE_GORSEL_UZANTILARI.get(content_type)
+    if extension is None:
+        extension = Path(str(getattr(part, "partname", ""))).suffix.casefold()
+        if extension not in _INLINE_GORSEL_DOSYA_UZANTILARI:
+            raise JeolojiBolumPaketiHatasi(
+                "Stratigrafik kesit görselinin formatı Word InlineShape için "
+                f"desteklenmiyor: {content_type or extension or 'bilinmiyor'}."
+            )
+    return extension, content_type or extension
+
+
+def _stratigrafik_anchor_onceligi(candidate: _StratigrafikGorselAdayi) -> int:
+    """Anchor'ın foreground/paragraph-relative güvenilirlik düzeyini döndür."""
+    if candidate.tasiyici == "inline":
+        return 3
+    if candidate.behind_doc in {"1", "true", "yes"}:
+        # Sayfa arkasında kalan eski harita gibi floating nesneler kesit adayı
+        # değildir. Caption paragrafına bağlı olsalar bile gerçek kesit seçimini
+        # gölgelememelidir.
+        return 0
+    if candidate.relative_from == "paragraph":
+        return 3
+    if candidate.relative_from:
+        return 2
+    return 1
+
+
+def _stratigrafik_blok_gorselini_sec(candidates):
+    """Tek bir paragraftaki image adayını belirsizlikte durarak seç."""
+    if not candidates:
+        return None
+    scored = [
+        ( _stratigrafik_anchor_onceligi(candidate), candidate)
+        for candidate in candidates
+    ]
+    scored = [item for item in scored if item[0] > 0]
+    if not scored:
+        return None
+    best_score = max(item[0] for item in scored)
+    best = [item[1] for item in scored if item[0] == best_score]
+    if len(best) > 1:
+        raise JeolojiBolumPaketiHatasi(
+            "Stratigrafik kesit adayı paragrafında birden fazla görsel eşdeğer "
+            "bulundu; yanlış görsel seçilmemesi için aktarım durduruldu."
+        )
+    return best[0]
+
+
+def _stratigrafik_sonraki_ayri_gorsel_adayini_bul(
+    document,
+    blocks,
+    caption_index: int,
+    regional_end: int,
+):
+    """Caption sonrasındaki ilk ayrı image-bearing paragrafı değerlendir."""
+    for index in range(caption_index + 1, regional_end):
+        block = blocks[index]
+        if not _blok_gorsel_iceriyor(block):
+            continue
+        candidates = _blok_gorsel_adaylarini_bul(
+            document,
+            block,
+            blok_no=index,
+            strict=True,
+        )
+        selected = _stratigrafik_blok_gorselini_sec(candidates)
+        if selected is not None:
+            return selected
+        # Yalnız behindDoc=1 floating nesne varsa bu eski/sarkan görüntüdür;
+        # bir sonraki gerçek raster paragrafına kadar aramaya devam et.
+    return None
+
+
+def _stratigrafik_caption_gorsel_adayini_bul(document, block, blok_no: int):
+    candidates = _blok_gorsel_adaylarini_bul(
+        document,
+        block,
+        blok_no=blok_no,
+        strict=True,
+    )
+    return _stratigrafik_blok_gorselini_sec(candidates)
+
+
+def _stratigrafik_onceki_referans_mesafesi(
+    blocks,
+    regional_start: int,
+    caption_index: int,
+    figure_number: str,
+):
+    if not figure_number:
+        return None
+    pattern = re.compile(
+        rf"\b(?:sekil|resim|levha)\s+{re.escape(figure_number)}\b"
+    )
+    for index in range(caption_index - 1, regional_start - 1, -1):
+        key = _anahtar(_paragraf_metni(blocks[index]))
+        if "stratigraf" in key and pattern.search(key):
+            return caption_index - index
+    return None
+
+
+def _stratigrafik_onceki_referans_numarasi(
+    blocks,
+    regional_start: int,
+    caption_index: int,
+):
+    pattern = re.compile(r"\b(?:sekil|resim|levha)\s+(\d+)\b")
+    for index in range(caption_index - 1, regional_start - 1, -1):
+        key = _anahtar(_paragraf_metni(blocks[index]))
+        if "stratigraf" not in key:
+            continue
+        match = pattern.search(key)
+        if match:
+            return match.group(1)
+    return ""
+
+
+def _stratigrafik_referans_cumlesi_mi(key: str) -> bool:
+    """Şekil numarasıyla başlayan düz cümleyi tam caption'dan ayır."""
+    return bool(
+        re.search(
+            r"\b(?:ver|goster|sunul|belirt|bak|yer\s+isareti)\w*\b",
+            key,
+        )
+    )
+
+
 def _normal_stil_id(document) -> str:
     """Belgedeki Normal paragraf stilinin gerçek XML kimliğini döndür."""
     for style in document.styles.element.findall(qn("w:style")):
@@ -434,8 +757,8 @@ def _stratigrafik_sekil_numaralari(blocks: list) -> set[str]:
     return numbers
 
 
-def _stratigrafik_kesit_araligi(document) -> tuple[int, int, str] | None:
-    """Kesit görseli ile başlığını, 2.1 içindeki şekil atfından hareketle bul."""
+def _stratigrafik_kesit_secim_detaylari(document):
+    """Kesit bloğunun gövde aralığını ve güvenli görsel adayını bul."""
     blocks = _govde_bloklari(document)
     regional_start, regional_end = _bolgesel_jeoloji_araligi(document)
     regional_blocks = blocks[regional_start:regional_end]
@@ -445,54 +768,121 @@ def _stratigrafik_kesit_araligi(document) -> tuple[int, int, str] | None:
     for index in range(regional_start, regional_end):
         block = blocks[index]
         key = _anahtar(_paragraf_metni(block))
-        image_present = _blok_gorsel_iceriyor(block)
         figure_match = re.match(r"^(?:sekil|resim|levha) (\d+)\b", key)
         figure_number = figure_match.group(1) if figure_match else ""
-        direct_caption = bool(
-            "stratigraf" in key
-            and (figure_match is not None or image_present or key.startswith("stratigraf"))
+        has_stratigraf = "stratigraf" in key
+        reference_sentence = _stratigrafik_referans_cumlesi_mi(key)
+        heading_level = _stil_baslik_seviyesi(document, block)
+        heading_caption = bool(
+            key.startswith("stratigraf")
+            and (
+                heading_level == 3
+                or (len(key.split()) <= 4 and "sekil" not in key)
+            )
         )
-        referenced_caption = bool(
-            figure_number and figure_number in figure_numbers
+        full_caption = bool(
+            figure_match
+            and has_stratigraf
+            and not reference_sentence
         )
+        short_caption = bool(
+            figure_match
+            and figure_number in figure_numbers
+            and not reference_sentence
+        )
+        direct_caption = full_caption or short_caption or heading_caption
+        referenced_caption = bool(figure_match and figure_number in figure_numbers)
         if not direct_caption and not referenced_caption:
             continue
+
+        if not figure_number:
+            figure_number = _stratigrafik_onceki_referans_numarasi(
+                blocks,
+                regional_start,
+                index,
+            )
+
         score = 0
-        if direct_caption:
-            score += 100
-        if referenced_caption:
-            score += 140
+        if full_caption:
+            # Tam şekil yazısı, öncesindeki düz referans cümlesinden açıkça
+            # daha güçlü adaydır.
+            score += 500
+        elif short_caption:
+            score += 420
+        elif heading_caption:
+            score += 280
+        if has_stratigraf:
+            score += 50
         if figure_match:
             score += 30
-        if image_present:
-            score += 50
+        if _blok_desteklenen_gorsel_tasiyicisi_var_mi(block):
+            score += 25
+        reference_distance = (
+            _stratigrafik_onceki_referans_mesafesi(
+                blocks,
+                regional_start,
+                index,
+                figure_number,
+            )
+            if figure_number
+            else None
+        )
+        if reference_distance is not None:
+            score += max(1, 25 - reference_distance)
         candidates.append((score, index, figure_number))
 
     if not candidates:
         return None
-    _score, caption_index, figure_number = max(
-        candidates,
-        key=lambda item: (item[0], item[1]),
-    )
-
-    visual_indices = [
-        index
-        for index in range(regional_start, regional_end)
-        if _blok_gorsel_iceriyor(blocks[index])
-        and abs(index - caption_index) <= 4
-    ]
-    if _blok_gorsel_iceriyor(blocks[caption_index]):
-        visual_index = caption_index
-    elif visual_indices:
-        visual_index = min(
-            visual_indices,
-            key=lambda index: (abs(index - caption_index), index),
+    best_score = max(item[0] for item in candidates)
+    best_candidates = [item for item in candidates if item[0] == best_score]
+    if len(best_candidates) > 1:
+        raise JeolojiBolumPaketiHatasi(
+            "Stratigrafik kesit için birden fazla olası açıklama bulundu; "
+            "kaynak Word güvenli biçimde sadeleştirilemedi."
         )
-    else:
+    _score, caption_index, figure_number = best_candidates[0]
+
+    # Önce caption'dan sonraki ilk ayrı image-bearing paragrafını değerlendir.
+    # Caption içine eski bir floating harita ilişmiş olsa bile gerçek kesit bu
+    # paragraftaki inline/anchor raster olabilir.
+    visual_candidate = _stratigrafik_sonraki_ayri_gorsel_adayini_bul(
+        document,
+        blocks,
+        caption_index,
+        regional_end,
+    )
+    if visual_candidate is None:
+        # Ayrı görsel yoksa caption bloğundaki foreground/paragraph-relative
+        # anchor veya inline adayını değerlendir. behindDoc=1/page anchor burada
+        # özellikle dışarıda kalır.
+        visual_candidate = _stratigrafik_caption_gorsel_adayini_bul(
+            document,
+            blocks[caption_index],
+            caption_index,
+        )
+
+    if visual_candidate is None:
+        # Eski kütüphane belgelerinde görsel caption'dan önce ayrı paragrafta
+        # bulunabiliyor. Yeni önceliklerin hiçbir adayı yoksa bu sınırlı geri
+        # dönüşü koru; eşit/çoklu adayda yine güvenli hata üret.
+        for index in range(caption_index - 1, max(regional_start, caption_index - 4) - 1, -1):
+            if not _blok_gorsel_iceriyor(blocks[index]):
+                continue
+            candidates_before = _blok_gorsel_adaylarini_bul(
+                document,
+                blocks[index],
+                blok_no=index,
+                strict=True,
+            )
+            visual_candidate = _stratigrafik_blok_gorselini_sec(candidates_before)
+            if visual_candidate is not None:
+                break
+
+    if visual_candidate is None:
         return None
 
-    start = min(caption_index, visual_index)
-    end = max(caption_index, visual_index) + 1
+    start = min(caption_index, visual_candidate.blok_no)
+    end = max(caption_index, visual_candidate.blok_no) + 1
     # Bazı eski Word'lerde başlık, numaralı şekil yazısından ayrı bir Heading 3
     # paragrafıdır. Kesit paketine ait olduğu açıkça görülen bu komşu başlığı da
     # al; görsel ve şekil yazısı ile birlikte Normal stile dönüştürülebilsin.
@@ -507,7 +897,57 @@ def _stratigrafik_kesit_araligi(document) -> tuple[int, int, str] | None:
         ):
             break
         start -= 1
+    return start, end, figure_number, regional_end, caption_index, visual_candidate
+
+
+def _stratigrafik_kesit_araligi(document) -> tuple[int, int, str] | None:
+    """Kesit görseli ile eski açıklamasının 2.1 içindeki aralığını bul."""
+    details = _stratigrafik_kesit_secim_detaylari(document)
+    if details is None:
+        return None
+    start, end, figure_number, _regional_end, _caption_index, _visual_candidate = details
     return start, end, figure_number
+
+
+def _stratigrafik_kesit_secimini_hazirla(document) -> _StratigrafikKesitSecimi:
+    details = _stratigrafik_kesit_secim_detaylari(document)
+    if details is None:
+        raise JeolojiBolumPaketiHatasi(
+            "Seçili jeoloji Word'ünde görseliyle birlikte aktarılabilir "
+            "stratigrafik kesit bulunamadı."
+        )
+    (
+        start,
+        end,
+        figure_number,
+        regional_end,
+        caption_index,
+        visual_candidate,
+    ) = details
+    part = visual_candidate.part
+    extension, content_type = _gorsel_uzantisi_ve_turu(part)
+    try:
+        blob = bytes(part.blob)
+    except Exception as exc:
+        raise JeolojiBolumPaketiHatasi(
+            "Stratigrafik kesit görselinin özgün DOCX blob'u okunamadı."
+        ) from exc
+    if not blob:
+        raise JeolojiBolumPaketiHatasi(
+            "Stratigrafik kesit görselinin özgün DOCX blob'u boş."
+        )
+    return _StratigrafikKesitSecimi(
+        baslangic_blok_no=start,
+        bitis_blok_no=end,
+        sekil_no=figure_number,
+        bolgesel_bitis_blok_no=regional_end,
+        caption_blok_no=caption_index,
+        gorsel_blok_no=visual_candidate.blok_no,
+        gorsel_blob=blob,
+        gorsel_uzantisi=extension,
+        gorsel_turu=content_type,
+        gorsel_adayi=visual_candidate,
+    )
 
 
 def _jeoloji_araligi(document) -> tuple[int, int, bool]:
@@ -659,49 +1099,226 @@ def stratigrafik_kesit_var_mi(kaynak_docx: str | os.PathLike[str]) -> bool:
     try:
         source = _docx_yolu(kaynak_docx, mevcut_olmali=True)
         document = Document(str(source))
+        _stratigrafik_kesit_secimini_hazirla(document)
     except Exception:
         return False
-    return _stratigrafik_kesit_araligi(document) is not None
+    return True
+
+
+def stratigrafik_kesit_gorselini_cikar(
+    kaynak_docx: str | os.PathLike[str],
+) -> tuple[bytes, str]:
+    """Kesit görselinin özgün blob'unu ve güvenli dosya uzantısını döndür."""
+    source = _docx_yolu(kaynak_docx, mevcut_olmali=True)
+    selection = _stratigrafik_kesit_secimini_hazirla(Document(str(source)))
+    return selection.gorsel_blob, selection.gorsel_uzantisi
+
+
+def _stratigrafik_kesit_gorselini_paragrafa_ekle(
+    document,
+    paragraph,
+    gorsel_blob: bytes,
+):
+    """Blob'u özgün bytes olarak wp:inline'a ekle ve oranını koru.
+
+    Bazı gerçek Word JPEG'lerinde DPI metadata'sı ``0`` olur. Python-docx'un
+    standart ``add_picture`` yolu bu durumda genişliği DPI ile hesaplarken
+    sıfıra bölünebilir. Fallback yalnız XML extent'ini piksel oranından kurar;
+    image part'a yazılan blob değişmeden kalır.
+    """
+    run = paragraph.add_run()
+    try:
+        return run.add_picture(BytesIO(gorsel_blob), width=Cm(15.0))
+    except ZeroDivisionError:
+        image = _DocxImage.from_blob(gorsel_blob)
+        if image.px_width <= 0 or image.px_height <= 0:
+            raise JeolojiBolumPaketiHatasi(
+                "Stratigrafik kesit görselinin piksel boyutu okunamadı; "
+                "kaynak Word güvenle dönüştürülemedi."
+            )
+        relation_id, image_part = document.part.get_or_add_image(
+            BytesIO(gorsel_blob)
+        )
+        width = int(Cm(15.0))
+        height = max(1, round(width * image.px_height / image.px_width))
+        inline = CT_Inline.new_pic_inline(
+            document.part.next_id,
+            relation_id,
+            image_part.filename,
+            width,
+            height,
+        )
+        run._r.add_drawing(inline)
+        return InlineShape(inline)
+
+
+def _stratigrafik_kesit_paragraflarini_ekle(document, hedef_blok, gorsel_blob: bytes):
+    """Hedef bloğun önüne yalnız standart Caption ve InlineShape ekle."""
+    caption = document.add_paragraph(STRATIGRAFIK_KESIT_CAPTION, style="Caption")
+    caption_p = caption._p
+    caption_p.getparent().remove(caption_p)
+    hedef_blok.addprevious(caption_p)
+
+    image_paragraph = document.add_paragraph()
+    image_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    _stratigrafik_kesit_gorselini_paragrafa_ekle(
+        document,
+        image_paragraph,
+        gorsel_blob,
+    )
+    image_p = image_paragraph._p
+    image_p.getparent().remove(image_p)
+    caption_p.addnext(image_p)
+    return caption, image_paragraph
+
+
+def _stratigrafik_kesit_paket_belgesini_olustur(gorsel_blob: bytes):
+    document = Document()
+    caption = document.add_paragraph(STRATIGRAFIK_KESIT_CAPTION, style="Caption")
+    image_paragraph = document.add_paragraph()
+    image_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    _stratigrafik_kesit_gorselini_paragrafa_ekle(
+        document,
+        image_paragraph,
+        gorsel_blob,
+    )
+    return document
+
+
+def _stratigrafik_secili_cizimi_kaldir(block, gorsel_adayi):
+    """Yalnız seçilen blip'i kaldır; aynı drawing'deki diğerlerini koru."""
+    blip = gorsel_adayi.blip
+    if blip.getparent() is not None:
+        blip.getparent().remove(blip)
+    drawing = gorsel_adayi.drawing
+    if drawing.getparent() is not None and not any(drawing.iter(qn("a:blip"))):
+        drawing.getparent().remove(drawing)
+
+
+def _stratigrafik_eski_caption_metinini_kaldir(block):
+    """Caption paragrafındaki Word metnini temizle, drawing'leri bırak."""
+    text_tags = {
+        qn("w:t"),
+        qn("w:delText"),
+        qn("w:instrText"),
+        qn("w:tab"),
+        qn("w:br"),
+        qn("w:cr"),
+        qn("w:fldChar"),
+        qn("w:noBreakHyphen"),
+        qn("w:softHyphen"),
+    }
+    for node in list(block.iter()):
+        if node.tag not in text_tags:
+            continue
+        parent = node.getparent()
+        if parent is not None:
+            parent.remove(node)
+
+
+def _stratigrafik_blokta_anlamli_icerik_var_mi(block) -> bool:
+    if _paragraf_metni(block):
+        return True
+    return any(
+        node.tag in {qn("w:drawing"), qn("w:pict"), qn("w:object")}
+        for node in block.iter()
+    )
+
+
+def _stratigrafik_eski_icerigi_temizle(document, selection):
+    """Eski caption/kesiti temizlemeden ilişkisiz drawing'leri koru."""
+    blocks = _govde_bloklari(document)
+    caption_index = selection.caption_blok_no
+    visual_index = selection.gorsel_blok_no
+    selected_indexes = range(
+        selection.baslangic_blok_no,
+        selection.bitis_blok_no,
+    )
+    for index in selected_indexes:
+        block = blocks[index]
+        if block.getparent() is None:
+            continue
+        if block.tag != qn("w:p"):
+            continue
+
+        key = _anahtar(_paragraf_metni(block))
+        old_heading = (
+            "stratigraf" in key
+            and _stil_baslik_seviyesi(document, block) == 3
+        )
+        if index == caption_index or old_heading:
+            _stratigrafik_eski_caption_metinini_kaldir(block)
+        if index == visual_index:
+            _stratigrafik_secili_cizimi_kaldir(
+                block,
+                selection.gorsel_adayi,
+            )
+
+        if not _stratigrafik_blokta_anlamli_icerik_var_mi(block):
+            block.getparent().remove(block)
 
 
 def stratigrafik_kesit_bolumunu_ayir(
     kaynak_docx: str | os.PathLike[str],
     paket_docx: str | os.PathLike[str],
 ) -> StratigrafikKesitAyirmaSonucu:
-    """Seçili Word'ün 2.1 bölümündeki kesit görseli ve başlığını mini DOCX yapar."""
+    """Kesiti yalnız standart Caption + InlineShape mini DOCX'i olarak ayır."""
     source = _docx_yolu(kaynak_docx, mevcut_olmali=True)
     output = _docx_yolu(paket_docx, mevcut_olmali=False)
     document = Document(str(source))
+    selection = _stratigrafik_kesit_secimini_hazirla(document)
+    package = _stratigrafik_kesit_paket_belgesini_olustur(selection.gorsel_blob)
+    _cekirdek_ozellikleri_temizle(package)
+    package.core_properties.title = "Stratigrafik Kesit Paketi"
+    _atomik_kaydet(package, output)
+    return StratigrafikKesitAyirmaSonucu(
+        kaynak_docx=str(source.resolve()),
+        paket_docx=str(output.resolve()),
+        blok_sayisi=selection.bitis_blok_no - selection.baslangic_blok_no,
+        baslangic_blok_no=selection.baslangic_blok_no,
+        bitis_blok_no=selection.bitis_blok_no,
+        sekil_no=selection.sekil_no,
+    )
+
+
+def stratigrafik_kesit_bolumunu_gorsel_olarak_yenile(
+    kaynak_docx: str | os.PathLike[str],
+    cikti_docx: str | os.PathLike[str] | None = None,
+) -> StratigrafikKesitAyirmaSonucu:
+    """Kaynak 2.1 içindeki eski kesit bloğunu standart görselle değiştir."""
+    source = _docx_yolu(kaynak_docx, mevcut_olmali=True)
+    output = _docx_yolu(cikti_docx or source, mevcut_olmali=False)
+    document = Document(str(source))
+    selection = _stratigrafik_kesit_secimini_hazirla(document)
     blocks = _govde_bloklari(document)
-    result = _stratigrafik_kesit_araligi(document)
-    if result is None:
+    if selection.bolgesel_bitis_blok_no >= len(blocks):
         raise JeolojiBolumPaketiHatasi(
-            "Seçili jeoloji Word'ünde görseliyle birlikte aktarılabilir "
-            "stratigrafik kesit bulunamadı."
+            "Stratigrafik kesit için 2.1.1 Yapısal Jeoloji başlığı öncesi "
+            "güvenli ekleme konumu bulunamadı."
         )
-    start, end, figure_number = result
-    selected = set(blocks[start:end])
-    if not selected:
+    hedef_blok = blocks[selection.bolgesel_bitis_blok_no]
+    if hedef_blok.tag != qn("w:p") or "yapisal jeoloji" not in _anahtar(
+        _paragraf_metni(hedef_blok)
+    ):
         raise JeolojiBolumPaketiHatasi(
-            "Stratigrafik kesitte aktarılacak Word bloğu bulunamadı."
+            "Stratigrafik kesit için 2.1.1 Yapısal Jeoloji başlığı öncesi "
+            "güvenli ekleme konumu doğrulanamadı."
         )
 
-    _stratigrafik_kesit_stillerini_normalize_et(document, start, end)
-    for child in list(document.element.body.iterchildren()):
-        if child.tag != qn("w:sectPr") and child not in selected:
-            document.element.body.remove(child)
-
-    _kullanilmayan_bolum_iliskilerini_kaldir(document)
-    _cekirdek_ozellikleri_temizle(document)
-    document.core_properties.title = "Stratigrafik Kesit Paketi"
+    _stratigrafik_eski_icerigi_temizle(document, selection)
+    _stratigrafik_kesit_paragraflarini_ekle(
+        document,
+        hedef_blok,
+        selection.gorsel_blob,
+    )
     _atomik_kaydet(document, output)
     return StratigrafikKesitAyirmaSonucu(
         kaynak_docx=str(source.resolve()),
         paket_docx=str(output.resolve()),
-        blok_sayisi=len(selected),
-        baslangic_blok_no=start,
-        bitis_blok_no=end,
-        sekil_no=figure_number,
+        blok_sayisi=selection.bitis_blok_no - selection.baslangic_blok_no,
+        baslangic_blok_no=selection.baslangic_blok_no,
+        bitis_blok_no=selection.bitis_blok_no,
+        sekil_no=selection.sekil_no,
     )
 
 
@@ -1260,9 +1877,12 @@ __all__ = [
     "JeolojiBolumPaketiHatasi",
     "JeolojiBolumYerlestirmeSonucu",
     "StratigrafikKesitAyirmaSonucu",
+    "STRATIGRAFIK_KESIT_CAPTION",
     "VARSAYILAN_YER_TUTUCU",
     "jeoloji_bolumunu_ayir",
     "jeoloji_bolumunu_yerlestir",
     "stratigrafik_kesit_bolumunu_ayir",
+    "stratigrafik_kesit_bolumunu_gorsel_olarak_yenile",
+    "stratigrafik_kesit_gorselini_cikar",
     "stratigrafik_kesit_var_mi",
 ]

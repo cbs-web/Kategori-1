@@ -4,6 +4,8 @@ from zipfile import ZipFile
 import pytest
 from docx import Document
 
+from formasyon_metin_kutuphanesi import eski_metin_birimlere_dagit
+
 from jeoloji_kutuphanesi import (
     AyniJeolojiKaydiHatasi,
     JeolojiKutuphanesi,
@@ -28,6 +30,40 @@ def _kayit(**overrides):
     }
     record.update(overrides)
     return record
+
+
+def test_oligo_miyosen_granitoyid_basligi_tg_birimine_ayrilir():
+    metin = (
+        "Oligosen-Miyosen Granitoyidleri (Tg)\n"
+        "Biga Yarımadası'ndaki granodiyoritik bileşimli sığ sokulumlar "
+        "Oligosen-Geç Miyosen aralığında bölgeye yerleşmiştir. "
+        "Jeokronolojik yaşlandırmalar birimin bölgesel konumunu doğrulamaktadır.\n"
+        "2.1.1 Yapısal Jeoloji ve Aktif Tektonik"
+    )
+
+    sonuc = eski_metin_birimlere_dagit(
+        metin,
+        [{"kod": "Tg", "ad": "Oligo-Miyosen Granitoyidleri"}],
+    )
+
+    assert len(next(iter(sonuc.values()))) > 80
+
+
+def test_granitoyid_basligi_kod_olmadan_yas_ve_yazim_esdegeriyle_eslesir():
+    metin = (
+        "Oligosen-Miyosen Granitoyidleri\n"
+        "Biga Yarımadası'ndaki granodiyoritik bileşimli sığ sokulumlar "
+        "Oligosen-Geç Miyosen aralığında bölgeye yerleşmiştir. "
+        "Jeokronolojik yaşlandırmalar birimin bölgesel konumunu doğrulamaktadır.\n"
+        "2.1.1 Yapısal Jeoloji ve Aktif Tektonik"
+    )
+
+    sonuc = eski_metin_birimlere_dagit(
+        metin,
+        [{"kod": "", "ad": "Üst Oligosen-Alt Miyosen Granitoyitleri"}],
+    )
+
+    assert len(next(iter(sonuc.values()))) > 80
 
 
 def _proje_raporu_yaz(path, *, ilce, yerlesim, ada, parsel):

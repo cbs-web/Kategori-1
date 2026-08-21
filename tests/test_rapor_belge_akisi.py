@@ -1,20 +1,25 @@
 from io import BytesIO
 from pathlib import Path
 from zipfile import ZipFile
+from xml.etree import ElementTree as ET
 
 import pytest
 from PIL import Image
 from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.style import WD_STYLE_TYPE
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Pt, RGBColor
+from docx.shared import Cm, Pt, RGBColor
 
 from rapor import RaporUretici
 from raporlama_islemleri import atomik_docx_kaydet
 from taahhutname import TaahhutnameUretici
 from jeoloji_bolum_paketi import (
+    STRATIGRAFIK_KESIT_CAPTION,
     stratigrafik_kesit_bolumunu_ayir,
+    stratigrafik_kesit_bolumunu_gorsel_olarak_yenile,
+    stratigrafik_kesit_gorselini_cikar,
     stratigrafik_kesit_var_mi,
 )
 from word_jeoloji_birlestirme import (
@@ -142,6 +147,27 @@ def _png(path, color):
     Image.new("RGB", (24, 16), color).save(path)
 
 
+def _document_media_refs(path):
+    with ZipFile(path) as archive:
+        document = ET.fromstring(archive.read("word/document.xml"))
+        relationships = ET.fromstring(
+            archive.read("word/_rels/document.xml.rels")
+        )
+    rel_targets = {
+        relation.get("Id"): relation.get("Target", "")
+        for relation in relationships
+    }
+    embed_attribute = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed"
+    blip_tag = "{http://schemas.openxmlformats.org/drawingml/2006/main}blip"
+    return {
+        rel_targets.get(blip.get(embed_attribute), "").replace("\\", "/").rsplit(
+            "/", 1
+        )[-1]
+        for blip in document.iter(blip_tag)
+        if "media/" in rel_targets.get(blip.get(embed_attribute), "")
+    }
+
+
 def test_docx_birlestirme_medya_stil_ve_numaralandirmayi_esler(tmp_path):
     hedef_resim = tmp_path / "hedef.png"
     kaynak_resim = tmp_path / "kaynak.png"
@@ -238,12 +264,16 @@ def test_secili_wordden_stratigrafik_kesit_gorseli_ve_basligi_ayrilir(
     assert result.sekil_no == "5"
     assert result.blok_sayisi == 1
     assert len(snippet.inline_shapes) == 1
-    assert kesit_basligi in snippet_text
+    assert snippet_text.strip() == STRATIGRAFIK_KESIT_CAPTION
+    assert kesit_basligi not in snippet_text
     assert "Şekil 4" not in snippet_text
     assert "2.1.1" not in snippet_text
+    assert snippet.paragraphs[0].style.name == "Caption"
+    assert snippet.paragraphs[1].alignment == WD_ALIGN_PARAGRAPH.CENTER
+    assert snippet.inline_shapes[0].width <= Cm(15.0)
 
 
-def test_stratigrafik_kesit_heading_3_ise_normal_stille_aktarilir(tmp_path):
+def test_stratigrafik_kesit_heading_3_ve_eski_caption_tasinmaz(tmp_path):
     kesit_resim = tmp_path / "kesit_heading3.png"
     _png(kesit_resim, "green")
     source = Document()
@@ -260,9 +290,164 @@ def test_stratigrafik_kesit_heading_3_ise_normal_stille_aktarilir(tmp_path):
     stratigrafik_kesit_bolumunu_ayir(source_path, output_path)
     snippet = Document(output_path)
 
-    baslik = next(p for p in snippet.paragraphs if "Stratigrafik Kesit" in p.text)
-    assert baslik.style.name == "Normal"
+    assert all("Stratigrafik Kesit" not in p.text for p in snippet.paragraphs)
+    assert snippet.paragraphs[0].text == STRATIGRAFIK_KESIT_CAPTION
+    assert snippet.paragraphs[0].style.name == "Caption"
     assert len(snippet.inline_shapes) == 1
+
+
+def test_secili_word_2_1_eski_kesit_blogunu_standart_gorselle_degistirir(tmp_path):
+    kesit_resim = tmp_path / "kesit_orijinal.png"
+    _png(kesit_resim, "green")
+    source = Document()
+    source.add_paragraph("2.1 Bölgesel Jeoloji", style="Heading 2")
+    source.add_paragraph("Stratigrafik kesit Şekil 5'te verilmiştir.")
+    source.add_paragraph("Stratigrafik Kesit", style="Heading 3")
+    source.add_picture(str(kesit_resim))
+    source.add_paragraph("Şekil 5 Eski kesit açıklaması")
+    source.add_paragraph("2.1.1 Yapısal Jeoloji", style="Heading 3")
+    source.add_paragraph("Korunacak yapısal jeoloji metni.")
+    source_path = tmp_path / "secili_2_1.docx"
+    output_path = tmp_path / "secili_2_1_donusturulmus.docx"
+    source.save(source_path)
+
+    stratigrafik_kesit_bolumunu_gorsel_olarak_yenile(source_path, output_path)
+    converted = Document(output_path)
+    metinler = [paragraph.text for paragraph in converted.paragraphs]
+
+    assert STRATIGRAFIK_KESIT_CAPTION in metinler
+    assert "Stratigrafik Kesit" not in "\n".join(metinler)
+    assert "Şekil 5 Eski kesit açıklaması" not in metinler
+    assert metinler.index(STRATIGRAFIK_KESIT_CAPTION) < metinler.index(
+        "2.1.1 Yapısal Jeoloji"
+    )
+    assert len(converted.inline_shapes) == 1
+    assert converted.paragraphs[metinler.index(STRATIGRAFIK_KESIT_CAPTION) + 1].alignment == (
+        WD_ALIGN_PARAGRAPH.CENTER
+    )
+
+    with ZipFile(output_path) as archive:
+        media = [
+            archive.read(name)
+            for name in archive.namelist()
+            if name.startswith("word/media/")
+        ]
+    assert kesit_resim.read_bytes() in media
+
+
+def test_stratigrafik_kesitte_birden_fazla_yakin_gorsel_guvenli_hata_verir(tmp_path):
+    first = tmp_path / "ilk.png"
+    second = tmp_path / "ikinci.png"
+    _png(first, "green")
+    _png(second, "red")
+    source = Document()
+    source.add_paragraph("2.1 Bölgesel Jeoloji", style="Heading 2")
+    source.add_paragraph("Stratigrafik kesit Şekil 5'te verilmiştir.")
+    caption = source.add_paragraph("Şekil 5 Çalışma alanı stratigrafik kesiti")
+    caption.add_run().add_picture(str(first))
+    caption.add_run().add_picture(str(second))
+    source.add_paragraph("2.1.1 Yapısal Jeoloji", style="Heading 3")
+    source_path = tmp_path / "coklu_gorsel.docx"
+    source.save(source_path)
+
+    with pytest.raises(ValueError, match="birden fazla görsel"):
+        stratigrafik_kesit_bolumunu_ayir(source_path, tmp_path / "paket.docx")
+
+
+@pytest.mark.parametrize(
+    ("kayit_no", "dosya_adi", "beklenen_medya"),
+    (
+        (2, "3c2e49184831177c0f12d3cc.docx", "word/media/image7.png"),
+        (90, "2d1db67d2b5366a042d2edd5.docx", "word/media/image7.jpeg"),
+        (188, "6e235401e0c0a5e287175e15.docx", "word/media/image7.jpeg"),
+        (210, "bcc60f3b88c39f664a1c624e.docx", "word/media/image7.png"),
+        (218, "b29fb070bcf37a749e8b36be.docx", "word/media/image8.jpg"),
+    ),
+)
+def test_gercek_kutuphane_kayitlarinda_kesit_blobu_dogru_seciliyor(
+    kayit_no,
+    dosya_adi,
+    beklenen_medya,
+):
+    kaynak = (
+        Path(r"C:\Users\Bugra Senel\AppData\Local\K-1\jeoloji\jeoloji_bolumleri")
+        / dosya_adi
+    )
+    if not kaynak.is_file():
+        pytest.skip(f"Gerçek kütüphane kaydı bu ortamda yok: ID {kayit_no}")
+
+    blob, extension = stratigrafik_kesit_gorselini_cikar(kaynak)
+
+    with ZipFile(kaynak) as archive:
+        expected = archive.read(beklenen_medya)
+    assert blob == expected
+    assert extension in {".png", ".jpg"}
+
+
+def test_gercek_kayit_188_donusumunde_foreground_anchor_inline_olarak_yazilir(
+    tmp_path,
+):
+    kaynak = Path(
+        r"C:\Users\Bugra Senel\AppData\Local\K-1\jeoloji\jeoloji_bolumleri\6e235401e0c0a5e287175e15.docx"
+    )
+    if not kaynak.is_file():
+        pytest.skip("Gerçek kütüphane kaydı bu ortamda yok: ID 188")
+
+    cikti = tmp_path / "id188_donusmus.docx"
+    stratigrafik_kesit_bolumunu_gorsel_olarak_yenile(kaynak, cikti)
+    document = Document(cikti)
+    metinler = [paragraph.text for paragraph in document.paragraphs]
+    caption_index = metinler.index(STRATIGRAFIK_KESIT_CAPTION)
+    heading_index = next(
+        index
+        for index, text in enumerate(metinler)
+        if "Yapısal Jeoloji" in text
+    )
+
+    assert caption_index < heading_index
+    image_paragraph = document.paragraphs[caption_index + 1]
+    assert len(list(image_paragraph._p.iter(qn("wp:inline")))) == 1
+    assert {
+        "image7.jpeg",
+        "image8.png",
+        "image9.jpeg",
+    } <= _document_media_refs(cikti)
+    with ZipFile(kaynak) as source_archive, ZipFile(cikti) as output_archive:
+        assert source_archive.read("word/media/image7.jpeg") in [
+            output_archive.read(name)
+            for name in output_archive.namelist()
+            if name.startswith("word/media/")
+        ]
+
+
+def test_gercek_kayit_218_donusumunda_genel_harita_ve_kesit_refleri_korunur(
+    tmp_path,
+):
+    kaynak = Path(
+        r"C:\Users\Bugra Senel\AppData\Local\K-1\jeoloji\jeoloji_bolumleri\b29fb070bcf37a749e8b36be.docx"
+    )
+    if not kaynak.is_file():
+        pytest.skip("Gerçek kütüphane kaydı bu ortamda yok: ID 218")
+
+    cikti = tmp_path / "id218_donusmus.docx"
+    stratigrafik_kesit_bolumunu_gorsel_olarak_yenile(kaynak, cikti)
+    document = Document(cikti)
+    metinler = [paragraph.text for paragraph in document.paragraphs]
+    caption_index = metinler.index(STRATIGRAFIK_KESIT_CAPTION)
+    heading_index = next(
+        index
+        for index, text in enumerate(metinler)
+        if "Yapısal Jeoloji" in text
+    )
+
+    assert caption_index < heading_index
+    image_paragraph = document.paragraphs[caption_index + 1]
+    assert len(list(image_paragraph._p.iter(qn("wp:inline")))) == 1
+    assert {
+        "image7.png",
+        "image8.jpg",
+        "image9.jpeg",
+    } <= _document_media_refs(cikti)
 
 
 def test_eski_wordde_1_3_2_muhendislik_jeolojisi_bolumu_cikarilir(tmp_path):

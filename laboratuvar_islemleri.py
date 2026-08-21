@@ -9,6 +9,7 @@ from laboratuvar import (
     LAB_YN_KOLONLARI,
     laboratuvar_dosyasi_oku,
     laboratuvar_numune_anahtari,
+    laboratuvar_numune_etiketlerini_uyarla,
     laboratuvar_pano_verisini_donustur,
     laboratuvar_satirlarini_birlestir,
 )
@@ -273,7 +274,28 @@ class LaboratuvarIslemleri:
         if hasattr(self, "lbl_lab_yn_sayac") and hasattr(self, "tree_lab_yn"):
             self.lbl_lab_yn_sayac.config(text=f"{len(self.tree_lab_yn.get_children())} satır")
 
+    def _lab_projedeki_numune_etiketleri(self, hedef):
+        """AÇ/YN sekmelerindeki kullanıcıya görünen numune adlarını döndür."""
+        onek = "AC" if hedef == "ac" else "YN"
+        etiketler = []
+        try:
+            kayitlar = self.ac_yn_sekme_kayitlari()
+        except Exception:
+            kayitlar = []
+        for kayit in kayitlar:
+            etiket = str(kayit.get("isim", "") or "").strip()
+            if laboratuvar_numune_anahtari(etiket).startswith(onek):
+                etiketler.append(etiket)
+        return etiketler
+
+    def _lab_satir_etiketlerini_projeye_uyarla(self, hedef, satirlar):
+        return laboratuvar_numune_etiketlerini_uyarla(
+            satirlar,
+            self._lab_projedeki_numune_etiketleri(hedef),
+        )
+
     def _lab_standart_satirlari_yapistir(self, hedef, satirlar):
+        satirlar = self._lab_satir_etiketlerini_projeye_uyarla(hedef, satirlar)
         tree = self.tree_lab_ac if hedef == "ac" else self.tree_lab_yn
         children = list(tree.get_children())
         selection = tree.selection()
@@ -296,11 +318,17 @@ class LaboratuvarIslemleri:
         self.lab_sayaclari_guncelle()
 
     def _lab1_satirlarini_yapistir(self, sonuc):
+        ac_satirlari = self._lab_satir_etiketlerini_projeye_uyarla(
+            "ac", sonuc.get("ac_satirlari", [])
+        )
+        yn_satirlari = self._lab_satir_etiketlerini_projeye_uyarla(
+            "yn", sonuc.get("yn_satirlari", [])
+        )
         ac_sonuc = laboratuvar_satirlarini_birlestir(
-            self.lab_ac_satirlari_al(), sonuc.get("ac_satirlari", [])
+            self.lab_ac_satirlari_al(), ac_satirlari
         )
         yn_sonuc = laboratuvar_satirlarini_birlestir(
-            self.lab_yn_satirlari_al(), sonuc.get("yn_satirlari", [])
+            self.lab_yn_satirlari_al(), yn_satirlari
         )
 
         if sonuc.get("ac_satirlari"):
@@ -387,11 +415,17 @@ class LaboratuvarIslemleri:
             # Excel'deki AÇ-1 ile tabloda bulunan AÇ1 aynı No+Derinlik
             # kaydıdır. Dosya yükleme yolu da pano yapıştırmasıyla aynı
             # birleştirme yardımcısını kullanmalıdır.
+            ac_satirlari = self._lab_satir_etiketlerini_projeye_uyarla(
+                "ac", sonuc["ac_satirlari"]
+            )
+            yn_satirlari = self._lab_satir_etiketlerini_projeye_uyarla(
+                "yn", sonuc["yn_satirlari"]
+            )
             ac_birlestirme = laboratuvar_satirlarini_birlestir(
-                self.lab_ac_satirlari_al(), sonuc["ac_satirlari"]
+                self.lab_ac_satirlari_al(), ac_satirlari
             )
             yn_birlestirme = laboratuvar_satirlarini_birlestir(
-                self.lab_yn_satirlari_al(), sonuc["yn_satirlari"]
+                self.lab_yn_satirlari_al(), yn_satirlari
             )
             if sonuc["ac_satirlari"]:
                 self.lab_ac_satirlari_yerlestir(ac_birlestirme["satirlar"])

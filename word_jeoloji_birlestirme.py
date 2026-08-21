@@ -9,8 +9,9 @@ from docx.oxml.ns import qn
 
 from jeoloji_bolum_paketi import (
     JeolojiBolumPaketiHatasi,
-    stratigrafik_kesit_bolumunu_ayir,
-    stratigrafik_kesit_stilini_normalize_et,
+    STRATIGRAFIK_KESIT_CAPTION,
+    stratigrafik_kesit_bolumunu_gorsel_olarak_yenile,
+    stratigrafik_kesit_gorselini_cikar,
     stratigrafik_kesit_var_mi,
 )
 
@@ -328,40 +329,62 @@ def wordde_stratigrafik_kesit_var_mi(kaynak_yolu):
 
 
 def _stratigrafik_kesiti_konuma_ekle(word, belge, kaynak_yolu, konum):
-    """Seçili Word'deki kesit görseli ve başlığını biçimiyle hedef konuma kopyala."""
+    """Kesit blob'unu Caption üstte, doğrudan InlineShape altta ekle."""
     with tempfile.NamedTemporaryFile(
         prefix="k1_stratigrafik_kesit_",
-        suffix=".docx",
+        suffix=".png",
         delete=False,
     ) as handle:
-        kesit_yolu = handle.name
+        gorsel_yolu = handle.name
     try:
         try:
-            stratigrafik_kesit_bolumunu_ayir(kaynak_yolu, kesit_yolu)
+            gorsel_blob, gorsel_uzantisi = stratigrafik_kesit_gorselini_cikar(
+                kaynak_yolu
+            )
+            if gorsel_uzantisi != ".png":
+                uzantili_yol = f"{os.path.splitext(gorsel_yolu)[0]}{gorsel_uzantisi}"
+                os.replace(gorsel_yolu, uzantili_yol)
+                gorsel_yolu = uzantili_yol
+            with open(gorsel_yolu, "wb") as image_file:
+                image_file.write(gorsel_blob)
         except JeolojiBolumPaketiHatasi as exc:
             raise ValueError(
                 f"Seçili jeoloji Word'ünden stratigrafik kesit alınamadı: {exc}"
             ) from exc
 
-        kesit_belgesi = word.Documents.Open(
-            FileName=os.path.abspath(kesit_yolu),
-            ReadOnly=True,
-            AddToRecentFiles=False,
-            Visible=False,
+        hedef_araligi = belge.Range(Start=konum, End=konum)
+        hedef_araligi.Text = STRATIGRAFIK_KESIT_CAPTION + "\r\r"
+        caption_end = konum + len(STRATIGRAFIK_KESIT_CAPTION) + 1
+        caption = belge.Range(
+            Start=konum,
+            End=caption_end,
+        ).Paragraphs(1)
+        caption.Range.Style = WD_STYLE_CAPTION
+
+        image_range = belge.Range(Start=caption_end, End=caption_end)
+        shape = image_range.InlineShapes.AddPicture(
+            FileName=os.path.abspath(gorsel_yolu),
+            LinkToFile=False,
+            SaveWithDocument=True,
+            Range=image_range,
         )
         try:
-            kaynak_araligi = kesit_belgesi.Content.Duplicate
-            if kaynak_araligi.End > kaynak_araligi.Start:
-                kaynak_araligi.End = kaynak_araligi.End - 1
-            hedef_araligi = belge.Range(Start=konum, End=konum)
-            hedef_araligi.FormattedText = kaynak_araligi.FormattedText
-            hedef_araligi.Collapse(WD_COLLAPSE_END)
-            hedef_araligi.InsertParagraphAfter()
-        finally:
-            kesit_belgesi.Close(SaveChanges=False)
+            shape.LockAspectRatio = True
+            shape.Width = word.CentimetersToPoints(15.0)
+        except Exception:
+            pass
+        try:
+            image_paragraph = shape.Range.Paragraphs(1)
+            image_paragraph.Range.Style = WD_STYLE_NORMAL
+        except Exception:
+            pass
+        try:
+            shape.Range.Paragraphs(1).Alignment = WD_ALIGN_PARAGRAPH_CENTER
+        except Exception:
+            pass
     finally:
         try:
-            os.remove(kesit_yolu)
+            os.remove(gorsel_yolu)
         except OSError:
             pass
 
@@ -375,11 +398,13 @@ def _bolgesel_jeoloji_kaynagini_hazirla(word, kaynak_yolu, veri):
             "Seçili jeoloji Word'ünde '2.1.1 Yapısal Jeoloji ve Aktif Tektonik' "
             "başlığı bulunamadı. Başka bir kütüphane Word'ü seçin."
         )
-    if not wordde_stratigrafik_kesit_var_mi(kaynak_yolu):
+    try:
+        stratigrafik_kesit_gorselini_cikar(kaynak_yolu)
+    except JeolojiBolumPaketiHatasi as exc:
         raise ValueError(
-            "Seçili jeoloji Word'ünde görseliyle birlikte aktarılabilir "
-            "stratigrafik kesit bulunamadı. Başka bir kütüphane Word'ü seçin."
-        )
+            "Seçili jeoloji Word'ünden stratigrafik kesit alınamadı: "
+            f"{exc}"
+        ) from exc
     mode = str(veri.get("kaynak_modu") or "kutuphane")
     if mode == "eski_rapor":
         if not _wordde_bolgesel_jeoloji_var_mi(kaynak_yolu):
@@ -390,7 +415,7 @@ def _bolgesel_jeoloji_kaynagini_hazirla(word, kaynak_yolu, veri):
         # Eski raporun 1.3.2 mühendislik jeolojisi metni, raporun program
         # tarafından üretilen 3.6 bölümünün yerine geçmemelidir. Kaynak kopyada
         # yalnız bu bölümün bir sonraki eş/üst başlığa kadar olan gövdesini
-        # çıkar; geri kalan Word biçimi, şekiller ve numaralandırma korunur.
+        # çıkar; kesit bloğunu da 2.1.1 öncesinde standart görsel olarak yenile.
         with tempfile.NamedTemporaryFile(
             prefix="k1_eski_jeoloji_",
             suffix=".docx",
@@ -400,7 +425,7 @@ def _bolgesel_jeoloji_kaynagini_hazirla(word, kaynak_yolu, veri):
         try:
             shutil.copy2(kaynak_yolu, temporary)
             _eski_rapor_muhendislik_jeolojisi_bolumunu_cikar(temporary)
-            stratigrafik_kesit_stilini_normalize_et(temporary, temporary)
+            stratigrafik_kesit_bolumunu_gorsel_olarak_yenile(temporary, temporary)
         except Exception:
             try:
                 os.remove(temporary)

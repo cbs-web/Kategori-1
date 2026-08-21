@@ -1,5 +1,6 @@
 from laboratuvar import (
     laboratuvar_numune_anahtari,
+    laboratuvar_numune_etiketlerini_uyarla,
     laboratuvar_satirlarini_birlestir,
 )
 
@@ -21,3 +22,27 @@ def test_excel_ac_1_mevcut_ac1_satirini_gunceller_ve_etiketi_korur():
     assert sonuc["eklenen"] == 0
     assert sonuc["guncellenen"] == 1
     assert sonuc["satirlar"] == [("AÇ1", "0,00 - 1,00", "yeni")]
+
+
+def test_excel_ac_1_lab_tablosu_bosken_projedeki_ac1_etiketini_kullanir():
+    gelen = [("AÇ-1", "0,00 - 1,00", "yeni")]
+
+    sonuc = laboratuvar_numune_etiketlerini_uyarla(gelen, ["AÇ1"])
+
+    assert sonuc == [("AÇ1", "0,00 - 1,00", "yeni")]
+
+
+def test_numune_etiketi_uyarlama_ac_ve_yn_yazimlarini_ayri_korur():
+    gelen = [
+        ("AÇ-1", "0-1", "ac"),
+        ("YN 1", "0-1", "yn"),
+        ("AÇ-3", "0-1", "bilinmeyen"),
+    ]
+
+    sonuc = laboratuvar_numune_etiketlerini_uyarla(gelen, ["AÇ1", "YN1"])
+
+    assert sonuc == [
+        ("AÇ1", "0-1", "ac"),
+        ("YN1", "0-1", "yn"),
+        ("AÇ-3", "0-1", "bilinmeyen"),
+    ]

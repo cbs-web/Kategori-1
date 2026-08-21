@@ -3,7 +3,6 @@ from tkinter import ttk, messagebox
 import ttkbootstrap as tb
 import logging
 import sys
-import tkintermapview
 import os
 import tempfile
 from copy import deepcopy
@@ -12,6 +11,7 @@ from arayuz_yardimcilari import ArayuzYardimcilari
 from raporlama_islemleri import RaporlamaIslemleri
 from ekler_islemleri import EklerIslemleri
 from harita_islemleri import HaritaIslemleri
+from harita_hassas_zoom import KesirliZoomHaritaView
 from harita_renkleri import JEOLOJI_HARITA_RENK_ACIKLAMASI
 from jeofizik_islemleri import JeofizikIslemleri
 from jeoloji_kutuphanesi_islemleri import JeolojiKutuphanesiIslemleri
@@ -122,12 +122,13 @@ class RaporProApp:
         self.tdth_verisi = bos_tdth_verisi()
         self.is_akisi_verisi = bos_is_akisi_verisi()
         self.proje_salt_okunur = False
+        self.salt_okunurda_acik_widgetlar = []
         self.animasyonlar_aktif = True
         # Etkileşim sırasında tüm proje ağacını yeniden serileştirmek yerine
         # ucuz bir kirli bayrağı tutulur. Tam karşılaştırma yalnızca dosya
         # değiştirme/kapatma gibi doğrulama gereken sınır noktalarında yapılır.
         self._proje_kirli = False
-        self.taahhut_varsayilanlari = {
+        yerlesik_taahhut_varsayilanlari = {
             "JEOFIZIK_MUH_AD": "",
             "JEOFIZIK_MUH_SICIL": "",
             "JEOFIZIK_MUH_ADRES": "",
@@ -137,6 +138,14 @@ class RaporProApp:
             "JEOLOJI_MUH_ADRES": "",
             "JEOLOJI_MUH_TELEFON": "",
         }
+        self.taahhut_varsayilanlari = self.kayit_yoneticisi().taahhut_varsayilanlarini_yukle()
+        if not isinstance(self.taahhut_varsayilanlari, dict):
+            self.taahhut_varsayilanlari = yerlesik_taahhut_varsayilanlari
+        else:
+            self.taahhut_varsayilanlari = {
+                kod: str(self.taahhut_varsayilanlari.get(kod, "") or "").strip()
+                for kod in yerlesik_taahhut_varsayilanlari
+            }
         self.taahhut_bilgileri = dict(self.taahhut_varsayilanlari)
         self.sablon_yolu = self.varsayilan_rapor_sablonu()
         self.jeoloji_sablon_yolu = ""
@@ -465,6 +474,9 @@ class RaporProApp:
     def genel_jeoloji_durumunu_guncelle(self):
         return self.genel_jeoloji_islemleri().genel_jeoloji_durumunu_guncelle()
 
+    def genel_jeoloji_eksik_metinlerini_tamamla(self):
+        return self.genel_jeoloji_islemleri().genel_jeoloji_eksik_metinlerini_tamamla()
+
     def sekme1_proje(self):
         return self.temel_bilgiler_islemleri().sekme1_proje()
 
@@ -576,94 +588,284 @@ class RaporProApp:
     def sekme7_harita(self):
         frame = ttk.Frame(self.notebook)
         self.notebook.add(frame, text="7. Haritalar")
-        ust_frame = ttk.Frame(frame)
-        ust_frame.pack(fill='x', pady=5)
-        ttk.Button(ust_frame, text="KML Yükle", command=self.kml_haritaya_yukle).pack(side="left", padx=5)
+
+        icerik = ttk.Frame(frame)
+        icerik.pack(fill="both", expand=True, padx=5, pady=5)
+
+        # Harita kontrolleri, dar ekranlarda kendi içinde kaydırılabilen sabit
+        # genişlikli bir panelde tutulur. Harita alanı kalan genişliği alır.
+        self.harita_kontrol_paneli = ttk.Frame(
+            icerik,
+            width=310,
+            style="Panel.TFrame",
+        )
+        self.harita_kontrol_paneli.pack(side="left", fill="y", padx=(0, 8))
+        self.harita_kontrol_paneli.pack_propagate(False)
+        self.harita_kontrol_paneli_acik = True
+
+        panel_baslik = ttk.Frame(
+            self.harita_kontrol_paneli,
+            style="Panel.TFrame",
+            padding=(8, 7, 8, 7),
+        )
+        panel_baslik.pack(side="top", fill="x")
+        self.harita_kontrol_basligi = ttk.Label(
+            panel_baslik,
+            text="Harita kontrolleri",
+            style="AltBaslik.TLabel",
+        )
+        self.harita_kontrol_basligi.pack(side="left", anchor="center")
+        self.harita_kontrol_toggle = ttk.Button(
+            panel_baslik,
+            text="Daralt",
+            width=7,
+            command=self.harita_kontrol_panelini_degistir,
+            style="Secondary.TButton",
+        )
+        self.harita_kontrol_toggle.pack(side="right")
+
+        self.harita_kontrol_cta = ttk.Frame(
+            self.harita_kontrol_paneli,
+            style="Panel.TFrame",
+            padding=(8, 8, 8, 8),
+        )
+        self.harita_kontrol_cta.pack(side="bottom", fill="x")
+        ttk.Button(
+            self.harita_kontrol_cta,
+            text="İşaretleri Tablolara Aktar",
+            command=self.harita_verilerini_senkronize_et,
+            style="Primary.TButton",
+        ).pack(fill="x")
+
+        panel_kaydirma = ttk.Frame(self.harita_kontrol_paneli, style="Panel.TFrame")
+        panel_kaydirma.pack(side="top", fill="both", expand=True)
+        self.harita_kontrol_kaydirma = panel_kaydirma
+
+        panel_bg = ttk.Style(self.root).lookup("Panel.TFrame", "background")
+        panel_canvas = tk.Canvas(
+            panel_kaydirma,
+            highlightthickness=0,
+            borderwidth=0,
+            background=panel_bg or self.root.cget("background"),
+        )
+        panel_scroll = ttk.Scrollbar(
+            panel_kaydirma,
+            orient="vertical",
+            command=panel_canvas.yview,
+        )
+        panel_scroll.pack(side="right", fill="y")
+        panel_canvas.pack(side="left", fill="both", expand=True)
+        panel_canvas.configure(yscrollcommand=panel_scroll.set)
+        self.harita_kontrol_canvas = panel_canvas
+
+        panel_icerigi = ttk.Frame(panel_canvas, style="Panel.TFrame", padding=(8, 0, 8, 8))
+        panel_penceresi = panel_canvas.create_window(
+            (0, 0),
+            window=panel_icerigi,
+            anchor="nw",
+        )
+        self.harita_kontrol_icerigi = panel_icerigi
+
+        def panel_icerigini_guncelle(event=None):
+            panel_canvas.configure(scrollregion=panel_canvas.bbox("all"))
+
+        def panel_genisligini_uyarla(event):
+            panel_canvas.itemconfigure(panel_penceresi, width=event.width)
+            panel_icerigini_guncelle()
+
+        panel_icerigi.bind("<Configure>", panel_icerigini_guncelle)
+        panel_canvas.bind("<Configure>", panel_genisligini_uyarla)
+
+        def panel_tekerlegini_kaydir(event):
+            if not self.harita_kontrol_paneli_acik:
+                return
+            try:
+                panel_sol = self.harita_kontrol_paneli.winfo_rootx()
+                panel_ust = self.harita_kontrol_paneli.winfo_rooty()
+                panel_sag = panel_sol + self.harita_kontrol_paneli.winfo_width()
+                panel_alt = panel_ust + self.harita_kontrol_paneli.winfo_height()
+                if not (panel_sol <= event.x_root <= panel_sag and panel_ust <= event.y_root <= panel_alt):
+                    return
+                miktar = -1 if event.delta > 0 else 1
+                panel_canvas.yview_scroll(miktar, "units")
+            except (tk.TclError, AttributeError):
+                pass
+
+        self.root.bind_all("<MouseWheel>", panel_tekerlegini_kaydir, add="+")
+
+        def kontrol_grubu(baslik):
+            grup = ttk.LabelFrame(panel_icerigi, text=baslik, padding=(8, 7))
+            grup.pack(fill="x", pady=(0, 8))
+            return grup
+
+        def ikincil_buton(parent, text, command):
+            dugme = ttk.Button(
+                parent,
+                text=text,
+                command=command,
+                style="Secondary.TButton",
+            )
+            dugme.pack(fill="x", pady=2)
+            return dugme
+
+        parsel_grubu = kontrol_grubu("Parsel")
+        ikincil_buton(parsel_grubu, "KML Yükle", self.kml_haritaya_yukle)
         self.btn_tkgm_kml = ttk.Button(
-            ust_frame,
+            parsel_grubu,
             text="TKGM'den Al",
             command=self.tkgm_kml_al,
-            bootstyle="success-outline",
+            style="Secondary.TButton",
         )
-        self.btn_tkgm_kml.pack(side="left", padx=2)
-        ttk.Label(ust_frame, text="İşaretleme Aracı:").pack(side="left", padx=(15, 5))
-        self.aktif_harita_araci = tk.StringVar(value="Yok")
-        ttk.Radiobutton(ust_frame, text="İzleme", variable=self.aktif_harita_araci, value="Yok", command=self.harita_araci_degisti).pack(side="left", padx=2)
-        ttk.Radiobutton(ust_frame, text="M (Merkez)", variable=self.aktif_harita_araci, value="M", command=self.harita_araci_degisti).pack(side="left", padx=2)
-        ttk.Radiobutton(ust_frame, text="AÇ", variable=self.aktif_harita_araci, value="AÇ", command=self.harita_araci_degisti).pack(side="left", padx=2)
-        ttk.Radiobutton(ust_frame, text="YN", variable=self.aktif_harita_araci, value="YN", command=self.harita_araci_degisti).pack(side="left", padx=2)
-        ttk.Radiobutton(ust_frame, text="SS", variable=self.aktif_harita_araci, value="SS", command=self.harita_araci_degisti).pack(side="left", padx=2)
-        
-        btn_haritalar_f = ttk.Frame(ust_frame)
-        btn_haritalar_f.pack(side="left", padx=15)
-        ttk.Button(btn_haritalar_f, text="Yakın Haritaları Hazırla", command=self.haritalari_hazirla, style="Secondary.TButton").pack(side="left", padx=2)
-        ttk.Button(btn_haritalar_f, text="Yerbulduru Hazırla", command=self.yerbulduru_hazirla, style="Secondary.TButton").pack(side="left", padx=2)
-        ttk.Button(btn_haritalar_f, text="Parsel Haritası Hazırla", command=self.parsel_haritasi_hazirla, style="Secondary.TButton").pack(side="left", padx=2)
-        
-        ttk.Button(ust_frame, text="İşaretleri Tablolara Aktar", command=self.harita_verilerini_senkronize_et, style="Primary.TButton").pack(side="right", padx=5)
+        self.btn_tkgm_kml.pack(fill="x", pady=2)
+        self.btn_parseli_odakla = ikincil_buton(
+            parsel_grubu,
+            "Parseli Odakla",
+            self.parseli_odakla,
+        )
+        self.salt_okunurda_acik_widget_ekle(self.btn_parseli_odakla)
 
-        kutuphane_frame = ttk.Frame(frame)
-        kutuphane_frame.pack(fill="x", padx=5, pady=(0, 5))
+        arac_grubu = kontrol_grubu("İşaretleme araçları")
+        self.aktif_harita_araci = tk.StringVar(value="Yok")
+        araclar = (
+            ("İzleme", "Yok"),
+            ("M (Merkez)", "M"),
+            ("AÇ", "AÇ"),
+            ("YN", "YN"),
+            ("SS", "SS"),
+        )
+        for index, (metin, deger) in enumerate(araclar):
+            ttk.Radiobutton(
+                arac_grubu,
+                text=metin,
+                variable=self.aktif_harita_araci,
+                value=deger,
+                command=self.harita_araci_degisti,
+            ).grid(
+                row=index // 2,
+                column=index % 2,
+                sticky="w",
+                padx=(0, 10),
+                pady=2,
+            )
+        arac_grubu.columnconfigure(0, weight=1)
+        arac_grubu.columnconfigure(1, weight=1)
+
+        hazirlama_grubu = kontrol_grubu("Harita hazırlama")
+        ikincil_buton(hazirlama_grubu, "Yakın Haritaları Hazırla", self.haritalari_hazirla)
+        ikincil_buton(hazirlama_grubu, "Yerbulduru Hazırla", self.yerbulduru_hazirla)
+        ikincil_buton(hazirlama_grubu, "Parsel Haritası Hazırla", self.parsel_haritasi_hazirla)
+
+        kutuphane_grubu = kontrol_grubu("Jeoloji katmanları")
         self.jeoloji_kutuphane_harita_var = tk.BooleanVar(value=True)
         self.jeoloji_kutuphane_taslak_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
-            kutuphane_frame,
+            kutuphane_grubu,
             text="Jeoloji kütüphanesi parsellerini göster",
             variable=self.jeoloji_kutuphane_harita_var,
             command=self.jeoloji_harita_katmanini_degistir,
-        ).pack(side="left")
+        ).pack(fill="x", anchor="w", pady=2)
         ttk.Checkbutton(
-            kutuphane_frame,
+            kutuphane_grubu,
             text="Taslakları da göster",
             variable=self.jeoloji_kutuphane_taslak_var,
             command=self.jeoloji_harita_katmanini_degistir,
-        ).pack(side="left", padx=(12, 0))
-        ttk.Button(
-            kutuphane_frame,
-            text="Katmanı Yenile",
-            command=self.jeoloji_harita_katmanini_yenile,
-        ).pack(side="left", padx=(12, 0))
-        self.jeoloji_harita_durum = tk.StringVar(value=JEOLOJI_HARITA_RENK_ACIKLAMASI)
-        ttk.Label(kutuphane_frame, textvariable=self.jeoloji_harita_durum).pack(side="right")
+        ).pack(fill="x", anchor="w", pady=2)
+        ikincil_buton(kutuphane_grubu, "Katmanı Yenile", self.jeoloji_harita_katmanini_yenile)
 
-        pafta_frame = ttk.Frame(frame)
-        pafta_frame.pack(fill="x", padx=5, pady=(0, 5))
-        ttk.Button(
-            pafta_frame,
+        pafta_grubu = kontrol_grubu("1/100.000 pafta")
+        ikincil_buton(
+            pafta_grubu,
             text="1/100.000 Pafta Kütüphanesi",
             command=self.jeoloji_pafta_kutuphanesi_penceresi,
-        ).pack(side="left")
-        ttk.Button(
-            pafta_frame,
-            text="Formasyonu Haritadan Bul",
-            command=self.formasyonu_jeoloji_haritasindan_bul,
-        ).pack(side="left", padx=(8, 0))
+        )
+        ikincil_buton(pafta_grubu, "Formasyonu Haritadan Bul", self.formasyonu_jeoloji_haritasindan_bul)
+        ikincil_buton(
+            pafta_grubu,
+            "Genel Jeoloji Haritası ve 2.1 Hazırla",
+            self.genel_jeoloji_haritasi_hazirla,
+        )
+
+        # Durum metinleri kontrollerden ayrılır; kullanıcı haritayı okurken
+        # lejantı ve KML/pafta hazırlık durumunu haritanın hemen üstünde görür.
+        harita_alani = ttk.Frame(icerik)
+        harita_alani.pack(side="left", fill="both", expand=True)
+        harita_durum_alani = ttk.Frame(
+            harita_alani,
+            style="Status.TFrame",
+            padding=(9, 7),
+        )
+        harita_durum_alani.pack(side="top", fill="x", pady=(0, 5))
+        self.jeoloji_harita_durum = tk.StringVar(value=JEOLOJI_HARITA_RENK_ACIKLAMASI)
         self.jeoloji_pafta_durum = tk.StringVar(
             value="1/100.000 formasyon tanıması için parsel KML'si yükleyin"
         )
-        ttk.Label(pafta_frame, textvariable=self.jeoloji_pafta_durum).pack(side="right")
-
-        genel_jeoloji_frame = ttk.Frame(frame)
-        genel_jeoloji_frame.pack(fill="x", padx=5, pady=(0, 5))
-        ttk.Button(
-            genel_jeoloji_frame,
-            text="Genel Jeoloji Haritası ve 2.1 Hazırla",
-            command=self.genel_jeoloji_haritasi_hazirla,
-            bootstyle="primary-outline",
-        ).pack(side="left")
         self.genel_jeoloji_durum = tk.StringVar(
             value="Genel jeoloji için parsel KML'si yükleyin"
         )
-        ttk.Label(genel_jeoloji_frame, textvariable=self.genel_jeoloji_durum).pack(side="right")
 
-        self.map_widget = tkintermapview.TkinterMapView(frame, width=800, height=400, corner_radius=0)
+        durum_etiketleri = []
+        durumlar = (
+            self.jeoloji_harita_durum,
+            self.jeoloji_pafta_durum,
+            self.genel_jeoloji_durum,
+        )
+        for sutun, durum in enumerate(durumlar):
+            etiket = ttk.Label(
+                harita_durum_alani,
+                textvariable=durum,
+                style="Status.TLabel",
+                justify="left",
+                anchor="w",
+                wraplength=1,
+            )
+            etiket.grid(
+                row=0,
+                column=sutun,
+                sticky="nsew",
+                padx=(0 if sutun == 0 else 4, 0 if sutun == 2 else 4),
+            )
+            durum_etiketleri.append(etiket)
+            harita_durum_alani.columnconfigure(sutun, weight=1, uniform="harita_durum")
+
+        def durum_etiketi_sarmasini_uyarla(event):
+            event.widget.configure(wraplength=max(1, event.width - 8))
+
+        for etiket in durum_etiketleri:
+            etiket.bind("<Configure>", durum_etiketi_sarmasini_uyarla)
+
+        self.map_widget = KesirliZoomHaritaView(
+            harita_alani,
+            width=800,
+            height=400,
+            corner_radius=0,
+        )
         self.map_widget.set_tile_server("https://mt0.google.com/vt/lyrs=s&hl=en&x={x}&y={y}&z={z}&s=Ga", max_zoom=22)
-        self.map_widget.set_position(39.524, 26.120) 
         self.map_widget.set_zoom(15)
+        self.map_widget.set_position(39.524, 26.120)
         self.map_widget.pack(fill="both", expand=True)
         self.map_widget.add_left_click_map_command(self.harita_sol_tik)
         self.map_widget.add_right_click_menu_command(label="En Yakın Noktayı Sil", command=self.harita_sag_tik, pass_coords=True)
         self.root.after(900, lambda: self.jeoloji_harita_katmanini_yenile(zorla=True))
+
+    def harita_kontrol_panelini_degistir(self):
+        acik = not getattr(self, "harita_kontrol_paneli_acik", True)
+        self.harita_kontrol_paneli_acik = acik
+        if acik:
+            self.harita_kontrol_paneli.configure(width=310)
+            self.harita_kontrol_basligi.pack(side="left", anchor="center")
+            self.harita_kontrol_toggle.configure(text="Daralt", width=7)
+            self.harita_kontrol_kaydirma.pack(side="top", fill="both", expand=True)
+            self.harita_kontrol_cta.pack(side="bottom", fill="x")
+        else:
+            self.harita_kontrol_kaydirma.pack_forget()
+            self.harita_kontrol_cta.pack_forget()
+            self.harita_kontrol_basligi.pack_forget()
+            self.harita_kontrol_paneli.configure(width=56)
+            self.harita_kontrol_toggle.configure(text="Aç", width=4)
+        self.harita_kontrol_paneli.update_idletasks()
+        self.harita_kontrol_canvas.configure(
+            scrollregion=self.harita_kontrol_canvas.bbox("all")
+        )
 
     def harita_islemleri(self):
         return HaritaIslemleri(self)
@@ -682,6 +884,15 @@ class RaporProApp:
 
     def harita_verilerini_senkronize_et(self):
         return self.harita_islemleri().harita_verilerini_senkronize_et()
+
+    def parseli_odakla(self, otomatik=False):
+        return self.harita_islemleri().parseli_odakla(otomatik=otomatik)
+
+    def parseli_odakla_dugmesini_guncelle(self):
+        return self.harita_islemleri().parseli_odakla_dugmesini_guncelle()
+
+    def parsel_kadraj_beklemesini_iptal_et(self):
+        return self.harita_islemleri().parsel_kadraj_beklemesini_iptal_et()
 
     def stripe_tree(self, tree):
         return self.arayuz_yardimcilari().stripe_tree(tree)
@@ -1068,6 +1279,9 @@ class RaporProApp:
 
     def on_deger_ekranini_guncelle(self):
         return self.on_deger_islemleri().on_deger_ekranini_guncelle()
+
+    def salt_okunurda_acik_widget_ekle(self, *widgets):
+        return self.on_deger_islemleri().salt_okunurda_acik_widget_ekle(*widgets)
 
     def is_asamasini_belirle(self):
         return self.on_deger_islemleri().is_asamasini_belirle()

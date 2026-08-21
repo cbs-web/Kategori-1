@@ -250,6 +250,57 @@ class GenelJeolojiIslemleri:
             result_keys.add(key)
         return result
 
+    def genel_jeoloji_eksik_metinlerini_tamamla(self):
+        """Projedeki boş 2.1 birim metinlerini kalıcı kütüphaneden tamamla.
+
+        Rapor ön kontrolü sırasında çağrılabilir. Kullanıcının dolu birim
+        metinlerini ve elle düzenleyebildiği birleşik 2.1 metin alanını
+        değiştirmez. Kalıcı kütüphanede metin yoksa önce onaylı eski raporların
+        2.1 bölümlerinden güvenle ayrıştırmayı dener.
+        """
+        state = getattr(self, "genel_jeoloji_verisi", {})
+        if not isinstance(state, dict) or state.get("kaynak_modu") == "eski_rapor":
+            return {"tamamlanan": [], "bulunamayan": []}
+
+        units = state.get("birimler", [])
+        if not isinstance(units, list):
+            return {"tamamlanan": [], "bulunamayan": []}
+        missing_units = [
+            unit
+            for unit in units
+            if isinstance(unit, dict)
+            and unit.get("kullan", True)
+            and not str(unit.get("bolgesel_jeoloji_metni") or "").strip()
+        ]
+        if not missing_units:
+            return {"tamamlanan": [], "bulunamayan": []}
+
+        library = self._metin_kutuphanesi()
+        try:
+            library.eski_jeoloji_wordlerinden_tamamla(missing_units)
+        except Exception as exc:
+            self.hata_kaydet("Eksik 2.1 metinleri eski Word kayıtlarından tamamlanamadı", exc)
+
+        completed = []
+        unresolved = []
+        for unit in missing_units:
+            stored = library.getir(unit.get("kod"), unit.get("ad")) or {}
+            text = str(stored.get("bolgesel_jeoloji_metni") or "").strip()
+            if not text:
+                unresolved.append(str(unit.get("ad") or unit.get("kod") or "Adsız birim"))
+                continue
+            unit["bolgesel_jeoloji_metni"] = text
+            unit["kutuphane_id"] = stored.get("id")
+            unit["kutuphane_revizyon_no"] = stored.get("revizyon_no")
+            unit["metin_kaynagi"] = "kalici_kutuphane"
+            completed.append(str(unit.get("ad") or unit.get("kod") or "Adsız birim"))
+
+        if completed:
+            state["eksik_metinler"] = unresolved
+            self._proje_kirli = True
+
+        return {"tamamlanan": completed, "bulunamayan": unresolved}
+
     def _genel_jeoloji_penceresi(self, analysis):
         previous = getattr(self, "genel_jeoloji_verisi", {})
         units = self._birimleri_kutuphaneyle_tamamla(analysis)

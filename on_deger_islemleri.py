@@ -116,12 +116,24 @@ class OnDegerIslemleri:
         self.btn_hesaptan_on_deger.pack(side="left", padx=(6, 0))
         ttk.Label(alt, textvariable=self.on_deger_karsilastirma_var, style="Muted.TLabel").pack(side="right")
 
-        self.salt_okunurda_acik_widgetlar = [self.btn_tdth_ac, self.btn_on_deger_gecmis]
+        self.salt_okunurda_acik_widget_ekle(
+            self.btn_tdth_ac,
+            self.btn_on_deger_gecmis,
+        )
         self.on_deger_ekranini_guncelle()
         aktif = self.tdth_verisi.get("aktif") or {}
         if aktif:
             self._tdth_rapor_alanlarini_uygula(aktif)
         return panel
+
+    def salt_okunurda_acik_widget_ekle(self, *widgets):
+        """Salt-okunur modda açık kalabilen widget listesini ekleyerek korur."""
+        mevcut = list(getattr(self, "salt_okunurda_acik_widgetlar", []))
+        for widget in widgets:
+            if widget is not None and widget not in mevcut:
+                mevcut.append(widget)
+        self.salt_okunurda_acik_widgetlar = mevcut
+        return mevcut
 
     def pga_haritasi_sec(self):
         if not self.degisiklik_izni_kontrol_et("PGA haritası seçimi"):
@@ -347,7 +359,13 @@ class OnDegerIslemleri:
                     ek for ek in self.ekler.get("TDTH", [])
                     if os.path.normcase(ek.get("yol", "")) != os.path.normcase(eski_aktif)
                 ]
-            self.ek_dosyayi_listeye_ekle("TDTH", "Sismik Tehlike Haritası Detay Raporu", kayit["pdf_yolu"])
+            dosya_turu = self._proje_metni_normalize(kayit.get("orijinal_dosya_adi"))
+            ek_basligi = (
+                "Sismik Tehlike Haritası Özet Raporu"
+                if "ozet" in dosya_turu
+                else "Sismik Tehlike Haritası Detay Raporu"
+            )
+            self.ek_dosyayi_listeye_ekle("TDTH", ek_basligi, kayit["pdf_yolu"])
             self.on_deger_ekranini_guncelle()
             self.durum_mesaji_yaz("TDTH PDF projeye aktarıldı", os.path.basename(kayit["pdf_yolu"]))
         except Exception as exc:

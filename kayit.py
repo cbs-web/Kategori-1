@@ -10,6 +10,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 
 from harita_dosyalari import RAPOR_HARITA_ALANLARI, harita_verisini_mevcut_dosyalarla_tamamla
+from harita_hassas_zoom import kesirli_zoom_degerini_duzelt
 from harita_renkleri import CALISAN_PARSEL_SINIR_KALINLIGI, CALISAN_PARSEL_SINIR_RENGI
 from on_deger import (
     bitmis_revizyonu_arsivle,
@@ -35,6 +36,8 @@ TAAHHUT_BILGI_ALANLARI = (
     "JEOLOJI_MUH_ADRES",
     "JEOLOJI_MUH_TELEFON",
 )
+TAAHHUT_VARSAYILAN_DOSYA_ADI = "taahhutname_varsayilanlari.json"
+TAAHHUT_VARSAYILAN_SURUMU = 1
 
 
 class KayitYoneticisi:
@@ -110,6 +113,55 @@ class KayitYoneticisi:
 
     def son_projeler_dosya_yolu(self):
         return os.path.join(self.kullanici_veri_klasoru_bul(), "son_projeler.json")
+
+    def taahhut_varsayilanlari_dosya_yolu(self):
+        return os.path.join(
+            self.kullanici_veri_klasoru_bul(),
+            TAAHHUT_VARSAYILAN_DOSYA_ADI,
+        )
+
+    @staticmethod
+    def _taahhut_bilgi_sozlugunu_temizle(veriler, temel=None):
+        sonuc = {
+            kod: str((temel or {}).get(kod, "") or "").strip()
+            for kod in TAAHHUT_BILGI_ALANLARI
+        }
+        if not isinstance(veriler, dict):
+            return sonuc
+        for kod in TAAHHUT_BILGI_ALANLARI:
+            if kod in veriler and not isinstance(veriler[kod], (dict, list)):
+                sonuc[kod] = str(veriler[kod] or "").strip()
+        return sonuc
+
+    def taahhut_varsayilanlarini_yukle(self):
+        """Kullanıcıya ait kalıcı mühendis profilini güvenli biçimde yükle."""
+        bos = {kod: "" for kod in TAAHHUT_BILGI_ALANLARI}
+        try:
+            with open(
+                self.taahhut_varsayilanlari_dosya_yolu(),
+                "r",
+                encoding="utf-8-sig",
+            ) as f:
+                kayit = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return bos
+        if not isinstance(kayit, dict):
+            return bos
+        bilgiler = kayit.get("muhendis_bilgileri", kayit)
+        return self._taahhut_bilgi_sozlugunu_temizle(bilgiler, bos)
+
+    def taahhut_varsayilanlarini_kaydet(self, veriler):
+        """Mühendis profilini proje dosyasından bağımsız ve atomik kaydet."""
+        temiz = self._taahhut_bilgi_sozlugunu_temizle(veriler)
+        self.atomik_json_yaz(
+            self.taahhut_varsayilanlari_dosya_yolu(),
+            {
+                "surum": TAAHHUT_VARSAYILAN_SURUMU,
+                "muhendis_bilgileri": temiz,
+            },
+            indent=2,
+        )
+        return temiz
 
     def son_projeleri_yukle(self):
         yeni_yol = self.son_projeler_dosya_yolu()
@@ -798,9 +850,14 @@ class KayitYoneticisi:
                 ).strip()
         for kod in TAAHHUT_BILGI_ALANLARI:
             if kod in taahhut:
-                hedef_taahhut[kod] = self._metne_cevir(
+                proje_degeri = self._metne_cevir(
                     taahhut[kod], f"_TAAHHUT_BILGILERI_.{kod}"
                 ).strip()
+                # Eski projelerde hiç girilmemiş/boş mühendis alanları yeni
+                # kalıcı profilden tamamlanır. Projede kayıtlı dolu değerler
+                # ise her zaman korunur ve global profil tarafından ezilmez.
+                if proje_degeri:
+                    hedef_taahhut[kod] = proje_degeri
         sonuc["_TAAHHUT_BILGILERI_"] = hedef_taahhut
 
         if "_AC_SEKMELERI_" in veriler:
@@ -946,7 +1003,52 @@ class KayitYoneticisi:
                 0,
                 22,
             )
-            hedef_harita["zoom"] = int(round(zoom))
+            hedef_harita["zoom"] = kesirli_zoom_degerini_duzelt(
+                zoom,
+                min_zoom=0,
+                max_zoom=22,
+            )
+            hedef_harita["parsel_odak_aktif"] = self._bool_deger(
+                harita.get("parsel_odak_aktif", hedef_harita.get("parsel_odak_aktif", False))
+            )
+            geri_gorunum = harita.get(
+                "parsel_odak_geri_gorunumu",
+                hedef_harita.get("parsel_odak_geri_gorunumu"),
+            )
+            if geri_gorunum is None:
+                hedef_harita["parsel_odak_geri_gorunumu"] = None
+            elif isinstance(geri_gorunum, dict):
+                hedef_harita["parsel_odak_geri_gorunumu"] = {
+                    "lat": self._sonlu_sayi(
+                        geri_gorunum.get("lat"),
+                        39.524,
+                        "__HARITA__.parsel_odak_geri_gorunumu.lat",
+                        -90.0,
+                        90.0,
+                    ),
+                    "lon": self._sonlu_sayi(
+                        geri_gorunum.get("lon"),
+                        26.120,
+                        "__HARITA__.parsel_odak_geri_gorunumu.lon",
+                        -180.0,
+                        180.0,
+                    ),
+                    "zoom": kesirli_zoom_degerini_duzelt(
+                        self._sonlu_sayi(
+                            geri_gorunum.get("zoom"),
+                            15,
+                            "__HARITA__.parsel_odak_geri_gorunumu.zoom",
+                            0,
+                            22,
+                        ),
+                        min_zoom=0,
+                        max_zoom=22,
+                    ),
+                }
+            else:
+                raise ValueError(
+                    "__HARITA__.parsel_odak_geri_gorunumu bir JSON nesnesi olmalıdır."
+                )
             hedef_harita["kml_yolu"] = self._metne_cevir(harita.get("kml_yolu", ""), "__HARITA__.kml_yolu")
             hedef_harita["parsel_haritasi_yolu"] = self._metne_cevir(
                 harita.get("parsel_haritasi_yolu", ""),
@@ -1218,9 +1320,17 @@ class KayitYoneticisi:
         }
 
         veriler["__HARITA__"] = {
-            "zoom": self.map_widget.zoom,
+            "zoom": kesirli_zoom_degerini_duzelt(
+                getattr(self.map_widget, "zoom", 15),
+                min_zoom=0,
+                max_zoom=22,
+            ),
             "lat": self.map_widget.get_position()[0],
             "lon": self.map_widget.get_position()[1],
+            "parsel_odak_aktif": bool(getattr(self, "_parsel_odak_aktif", False)),
+            "parsel_odak_geri_gorunumu": copy.deepcopy(
+                getattr(self, "_parsel_odak_geri_gorunumu", None)
+            ),
             "kml_yolu": getattr(self, "yuklu_kml_yolu", ""),
             "kml_points": copy.deepcopy(getattr(self, "yuklu_kml_points", [])),
             "parsel_haritasi_yolu": getattr(self, "img_parsel_haritasi", "") or "",
@@ -1269,6 +1379,9 @@ class KayitYoneticisi:
         return veriler
 
     def gecici_proje_durumunu_temizle(self):
+        if hasattr(self, "parsel_kadraj_beklemesini_iptal_et"):
+            self.parsel_kadraj_beklemesini_iptal_et()
+
         after_id = getattr(self, "_harita_yeniden_ciz_after_id", None)
         if after_id is not None:
             try:
@@ -1472,8 +1585,14 @@ class KayitYoneticisi:
         )
 
         hd = veriler.get("__HARITA__", {})
-        self.map_widget.set_position(hd.get("lat", 39.524), hd.get("lon", 26.120))
         self.map_widget.set_zoom(hd.get("zoom", 15))
+        self.map_widget.set_position(hd.get("lat", 39.524), hd.get("lon", 26.120))
+        self._parsel_odak_aktif = self._bool_deger(hd.get("parsel_odak_aktif", False))
+        self._parsel_odak_geri_gorunumu = copy.deepcopy(
+            hd.get("parsel_odak_geri_gorunumu")
+        )
+        if hasattr(self, "parseli_odakla_dugmesini_guncelle"):
+            self.parseli_odakla_dugmesini_guncelle()
         self.yuklu_kml_yolu = hd.get("kml_yolu", "")
         self.yuklu_kml_points = copy.deepcopy(hd.get("kml_points", []))
         self.jeoloji_pafta_sonucu = copy.deepcopy(hd.get("jeoloji_pafta_sonucu", {}))

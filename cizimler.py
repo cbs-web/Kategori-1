@@ -728,9 +728,9 @@ class CizimUretici:
         except Exception:
             old_position = None
         try:
-            old_zoom = int(getattr(self.map_widget, "zoom", 15))
+            old_zoom = float(getattr(self.map_widget, "zoom", 15))
         except Exception:
-            old_zoom = 15
+            old_zoom = 15.0
 
         self._harita_disari_aktarim_aktif = True
         image = None
@@ -1154,7 +1154,9 @@ class CizimUretici:
             
             if mevcut_konum:
                 self.map_widget.set_position(mevcut_konum[0], mevcut_konum[1])
-                self.map_widget.set_zoom(mevcut_zoom_int)
+                # Export uses a full tile zoom for deterministic raster
+                # output; restore the exact interactive quarter-step view.
+                self.map_widget.set_zoom(mevcut_zoom)
             self.sil_ve_yeniden_ciz(True, True, True)
             if hasattr(self, "durum_mesaji_yaz"):
                 self.durum_mesaji_yaz("Yerbulduru haritası hazırlandı", kayit_klasoru)
@@ -1163,7 +1165,7 @@ class CizimUretici:
             if mevcut_konum:
                 try:
                     self.map_widget.set_position(mevcut_konum[0], mevcut_konum[1])
-                    self.map_widget.set_zoom(mevcut_zoom_int)
+                    self.map_widget.set_zoom(mevcut_zoom)
                 except Exception:
                     pass
             self.sil_ve_yeniden_ciz(True, True, True)

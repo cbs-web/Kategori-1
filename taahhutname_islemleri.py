@@ -270,6 +270,22 @@ class TaahhutnameIslemleri:
                 mevcut[kod] = str(veriler[kod]).strip()
         self.taahhut_bilgileri = mevcut
 
+    def taahhut_bilgilerini_kalici_kaydet(self, veriler):
+        """Bilgileri açık projeye ve sonraki projelerin varsayılanına uygula."""
+        yeni = {
+            kod: str((veriler or {}).get(kod, "") or "").strip()
+            for kod, _etiket in TAAHHUT_ALAN_ETIKETLERI
+        }
+        kaydedilen = self.kayit_yoneticisi().taahhut_varsayilanlarini_kaydet(yeni)
+        self.taahhut_varsayilanlari = dict(kaydedilen)
+        self.taahhut_bilgileri = dict(kaydedilen)
+
+        varsayilan_proje = getattr(self, "varsayilan_proje_verisi", None)
+        if isinstance(varsayilan_proje, dict):
+            varsayilan_proje["_TAAHHUT_BILGILERI_"] = dict(kaydedilen)
+        self._proje_kirli = True
+        return kaydedilen
+
     def taahhut_eksik_muhendis_alanlari(self):
         bilgiler = self.taahhut_bilgilerini_topla()
         return [
@@ -301,10 +317,22 @@ class TaahhutnameIslemleri:
             if eksikler:
                 messagebox.showwarning("Eksik Bilgi", "Boş bırakılamayan alanlar:\n- " + "\n- ".join(eksikler), parent=pencere)
                 return
-            self.taahhut_bilgileri = yeni
+            try:
+                self.taahhut_bilgilerini_kalici_kaydet(yeni)
+            except Exception as exc:
+                self.hata_kaydet("Taahhütname mühendis bilgileri kalıcı kaydedilemedi", exc)
+                messagebox.showerror(
+                    "Kayıt Hatası",
+                    f"Mühendis bilgileri kalıcı olarak kaydedilemedi:\n{exc}",
+                    parent=pencere,
+                )
+                return
             pencere.destroy()
             if hasattr(self, "durum_mesaji_yaz"):
-                self.durum_mesaji_yaz("Taahhütname mühendis bilgileri güncellendi")
+                self.durum_mesaji_yaz(
+                    "Taahhütname mühendis bilgileri kaydedildi",
+                    "Yeni projelerde otomatik kullanılacak",
+                )
             if callable(kaydedilince):
                 kaydedilince()
 

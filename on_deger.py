@@ -343,6 +343,42 @@ def _ilk_eslesme(metin, desenler, flags=re.IGNORECASE):
     return ""
 
 
+def tdth_sayisal_degerleri_oku(metin):
+    """TDTH özet ve detay raporlarındaki sayısal sonuçları okur.
+
+    Özet raporunda SDS/SD1 aynı satırda diğer etiketlerle bulunabilir.
+    Detay raporunda ise bu iki değer formülün en son sonucu olarak yazılır.
+    Doğrudan sonuç desenleri önce denenerek açıklama metnindeki
+    ``SD1: 1.0 saniye`` gibi ifadelerin değer sanılması önlenir.
+    """
+    sayi = r"([-+]?\d+(?:[.,]\d+)?)"
+    etiketler = {
+        "PGA": [rf"\bPGA\s*[:=]\s*{sayi}"],
+        "PGV": [rf"\bPGV\s*[:=]\s*{sayi}"],
+        "SS": [rf"\bS[Ss]\s*[:=]\s*{sayi}"],
+        "S1": [rf"\bS1\s*[:=]\s*{sayi}"],
+        "FS": [rf"\bF[Ss]\s*[:=]\s*{sayi}"],
+        "F1": [rf"\bF1\s*[:=]\s*{sayi}"],
+        "SDS": [
+            rf"\bSDS\s*[:=]\s*{sayi}(?=[ \t]*(?:\b(?:SD1|PGA|PGV|TA|TB|TL)\s*[:=]|[\r\n]|$))",
+            rf"(?m)^\s*SDS[^\r\n]*=[ \t]*{sayi}[ \t]*$",
+        ],
+        "SD1": [
+            rf"\bSD1\s*[:=]\s*{sayi}(?=[ \t]*(?:\b(?:PGA|PGV|TA|TB|TL|SDS)\s*[:=]|[\r\n]|$))",
+            rf"(?m)^\s*SD1[^\r\n]*=[ \t]*{sayi}[ \t]*$",
+        ],
+        "TA": [rf"\bTA\s*[:=]\s*{sayi}"],
+        "TB": [rf"\bTB\s*[:=]\s*{sayi}"],
+        "TL": [rf"\bTL\s*[:=]\s*{sayi}"],
+    }
+    degerler = {}
+    for kod, desenler in etiketler.items():
+        deger = _ilk_eslesme(metin, desenler)
+        if deger:
+            degerler[kod] = deger.replace(",", ".")
+    return degerler
+
+
 def tdth_pdf_bilgilerini_oku(yol):
     if not os.path.isfile(yol):
         raise ValueError("TDTH PDF dosyası bulunamadı.")
@@ -366,24 +402,7 @@ def tdth_pdf_bilgilerini_oku(yol):
         raise ValueError("TDTH PDF içindeki metin okunamadı.")
 
     sayi = r"([-+]?\d+(?:[.,]\d+)?)"
-    degerler = {}
-    etiketler = {
-        "PGA": [rf"\bPGA\s*[:=]\s*{sayi}"],
-        "PGV": [rf"\bPGV\s*[:=]\s*{sayi}"],
-        "SS": [rf"\bS[Ss]\s*[:=]\s*{sayi}"],
-        "S1": [rf"\bS1\s*[:=]\s*{sayi}"],
-        "FS": [rf"\bF[Ss]\s*[:=]\s*{sayi}"],
-        "F1": [rf"\bF1\s*[:=]\s*{sayi}"],
-        "SDS": [rf"(?m)^\s*SDS[^\r\n]*=[ \t]*{sayi}[ \t]*$", rf"\bSDS[ \t]*:[ \t]*{sayi}"],
-        "SD1": [rf"(?m)^\s*SD1[^\r\n]*=[ \t]*{sayi}[ \t]*$", rf"\bSD1[ \t]*:[ \t]*{sayi}"],
-        "TA": [rf"\bTA\s*[:=]\s*{sayi}"],
-        "TB": [rf"\bTB\s*[:=]\s*{sayi}"],
-        "TL": [rf"\bTL\s*[:=]\s*{sayi}"],
-    }
-    for kod, desenler in etiketler.items():
-        deger = _ilk_eslesme(metin, desenler)
-        if deger:
-            degerler[kod] = deger.replace(",", ".")
+    degerler = tdth_sayisal_degerleri_oku(metin)
 
     rapor_basligi = _ilk_eslesme(
         metin,

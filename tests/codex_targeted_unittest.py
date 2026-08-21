@@ -16,7 +16,10 @@ from PIL import Image
 import jeoloji_yapay_zeka as yapay_zeka
 from cizimler import CizimUretici
 from ekler import ek_kategori_durumunu_hazirla, ek_taahhutname_mi, ekleri_denetle
-from jeoloji_bolum_paketi import stratigrafik_kesit_bolumunu_ayir
+from jeoloji_bolum_paketi import (
+    STRATIGRAFIK_KESIT_CAPTION,
+    stratigrafik_kesit_bolumunu_ayir,
+)
 from laboratuvar import laboratuvar_numune_anahtari, laboratuvar_satirlarini_birlestir
 from rapor import RaporUretici
 from word_jeoloji_birlestirme import _eski_rapor_muhendislik_jeolojisi_bolumunu_cikar
@@ -44,8 +47,9 @@ class CodexTargetedTests(unittest.TestCase):
             doc.save(source)
             stratigrafik_kesit_bolumunu_ayir(source, output)
             result = Document(output)
-            heading = next(p for p in result.paragraphs if "Stratigrafik Kesit" in p.text)
-            self.assertEqual(heading.style.name, "Normal")
+            self.assertEqual(result.paragraphs[0].text, STRATIGRAFIK_KESIT_CAPTION)
+            self.assertEqual(result.paragraphs[0].style.name, "Caption")
+            self.assertNotIn("Stratigrafik Kesit", "\n".join(p.text for p in result.paragraphs))
             self.assertEqual(len(result.inline_shapes), 1)
 
     def test_eski_1_3_2_bolumu_cikarilir(self):

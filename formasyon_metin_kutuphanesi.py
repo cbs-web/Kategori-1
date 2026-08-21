@@ -123,6 +123,8 @@ _BIRIM_BASLIGI_TERIMLERI = {
     "gnaysi",
     "graniti",
     "granitoidleri",
+    "granitoyidleri",
+    "granitoyitleri",
     "ignimbiriti",
     "kirectasi",
     "kompleksi",
@@ -200,10 +202,30 @@ def _baslik_birim_anahtari(heading, targets):
         for target in targets:
             if target["kod_key"] and target["kod_key"] == heading_code_key:
                 return target["key"]
+    heading_aliases = _birim_ad_anahtari_esdegerleri(heading_name_key)
     for target in targets:
-        if target["ad_key"] and target["ad_key"] == heading_name_key:
+        target_aliases = _birim_ad_anahtari_esdegerleri(target["ad_key"])
+        if target_aliases and heading_aliases.intersection(target_aliases):
             return target["key"]
     return None
+
+
+def _birim_ad_anahtari_esdegerleri(value):
+    """Eski raporlardaki güvenli ve yaygın birim adı yazım farklarını üret."""
+    key = jeoloji_anahtari(value)
+    equivalents = {key}
+    replacements = (
+        ("granitoyid", "granitoid"),
+        ("granitoyit", "granitoid"),
+        ("oligo miyosen", "oligosen miyosen"),
+        ("ust oligosen alt miyosen", "oligosen miyosen"),
+        ("oligosen alt miyosen", "oligosen miyosen"),
+    )
+    normalized = key
+    for old, new in replacements:
+        normalized = normalized.replace(old, new)
+    equivalents.add(" ".join(normalized.split()))
+    return {item for item in equivalents if item}
 
 
 def eski_metin_birimlere_dagit(metin, birimler):

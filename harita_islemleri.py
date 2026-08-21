@@ -14,11 +14,101 @@ from harita_renkleri import (
     SS_SERIM_KESIK_DESENI,
     SS_SERIM_RENGI,
 )
+from harita_hassas_zoom import KESIRLI_ZOOM_ADIMI, kesirli_zoom_degerini_duzelt
 from tkgm_kml import tkgm_kml_dosya_adi, tkgm_parsel_kml_olustur
 
 
 KML_AZAMI_DOSYA_BOYUTU = 10 * 1024 * 1024
 KML_AZAMI_NOKTA_SAYISI = 20_000
+PARSEL_ETKILESIMLI_KENAR_PAYI = 0.10
+PARSEL_KADRAJ_MIN_BOYUT = 64
+PARSEL_KADRAJ_BEKLEME_DENEMESI = 10
+
+
+def _parsel_kadraj_mercator(enlem, boylam):
+    enlem = max(-85.05112878, min(85.05112878, float(enlem)))
+    x = (float(boylam) + 180.0) / 360.0
+    y = (1.0 - math.asinh(math.tan(math.radians(enlem))) / math.pi) / 2.0
+    return x, y
+
+
+def parsel_etkilesimli_kadraj_hesapla(
+    noktalar,
+    genislik,
+    yukseklik,
+    kenar_payi=PARSEL_ETKILESIMLI_KENAR_PAYI,
+    min_zoom=1,
+    max_zoom=22,
+):
+    """Etkileşimli harita için merkez, tam karo zoom'u ve ideal zoom'u hesaplar.
+
+    Adapter widget, ``round(self.zoom)`` seviyesindeki kaynak karoyu kesirli
+    efektif karo boyutuna ölçekler. Bu nedenle burada güvenli kenar payını
+    koruyan en yüksek 0,25 adımlı zoom döndürülür; ``ideal_zoom`` ise ölçülen
+    ham değeri teşhis ve test için korur.
+    """
+    temiz = []
+    for nokta in noktalar or []:
+        if not isinstance(nokta, (list, tuple)) or len(nokta) < 2:
+            raise ValueError("Parsel koordinatı [enlem, boylam] biçiminde olmalıdır.")
+        try:
+            enlem, boylam = float(nokta[0]), float(nokta[1])
+        except (TypeError, ValueError):
+            raise ValueError("Parsel koordinatları sayısal olmalıdır.") from None
+        if not math.isfinite(enlem) or not math.isfinite(boylam):
+            raise ValueError("Parsel koordinatları sonlu olmalıdır.")
+        if not -90.0 <= enlem <= 90.0 or not -180.0 <= boylam <= 180.0:
+            raise ValueError("Parsel koordinatı WGS84 aralığının dışında.")
+        temiz.append((enlem, boylam))
+    if len({(round(p[0], 10), round(p[1], 10)) for p in temiz}) < 3:
+        raise ValueError("Parsel kadrajı için en az üç farklı koordinat gerekir.")
+
+    try:
+        genislik = max(1.0, float(genislik))
+        yukseklik = max(1.0, float(yukseklik))
+    except (TypeError, ValueError):
+        raise ValueError("Parsel kadrajı için geçerli harita boyutu gerekir.") from None
+    if not math.isfinite(genislik) or not math.isfinite(yukseklik):
+        raise ValueError("Parsel kadrajı harita boyutları sonlu olmalıdır.")
+
+    try:
+        pay = float(kenar_payi)
+    except (TypeError, ValueError):
+        pay = PARSEL_ETKILESIMLI_KENAR_PAYI
+    if not math.isfinite(pay):
+        pay = PARSEL_ETKILESIMLI_KENAR_PAYI
+    pay = min(0.30, max(0.05, pay))
+
+    try:
+        min_zoom = max(0, int(min_zoom))
+        max_zoom = max(min_zoom, int(max_zoom))
+    except (TypeError, ValueError):
+        min_zoom, max_zoom = 1, 22
+
+    mercator = [_parsel_kadraj_mercator(enlem, boylam) for enlem, boylam in temiz]
+    xs = [nokta[0] for nokta in mercator]
+    ys = [nokta[1] for nokta in mercator]
+    span_x = max(xs) - min(xs)
+    span_y = max(ys) - min(ys)
+    kullanilabilir_w = genislik * (1.0 - 2.0 * pay)
+    kullanilabilir_h = yukseklik * (1.0 - 2.0 * pay)
+    zoom_x = math.log2(kullanilabilir_w / (256.0 * span_x)) if span_x > 0 else float(max_zoom)
+    zoom_y = math.log2(kullanilabilir_h / (256.0 * span_y)) if span_y > 0 else float(max_zoom)
+    ideal_zoom = min(zoom_x, zoom_y)
+    ideal_zoom = max(float(min_zoom), min(float(max_zoom), ideal_zoom))
+    zoom = math.floor((ideal_zoom + 1e-9) / KESIRLI_ZOOM_ADIMI) * KESIRLI_ZOOM_ADIMI
+    zoom = kesirli_zoom_degerini_duzelt(
+        zoom,
+        min_zoom=min_zoom,
+        max_zoom=max_zoom,
+        adim=KESIRLI_ZOOM_ADIMI,
+    )
+
+    merkez = (
+        math.degrees(math.atan(math.sinh(math.pi * (1.0 - 2.0 * ((min(ys) + max(ys)) / 2.0))))),
+        ((min(xs) + max(xs)) / 2.0 * 360.0) - 180.0,
+    )
+    return merkez, zoom, ideal_zoom
 
 
 def isim_bazli_birlestirme_plani(mevcut_isimler, hedef_isimler):
@@ -206,6 +296,275 @@ class HaritaIslemleri:
             object.__setattr__(self, name, value)
         else:
             setattr(self.app, name, value)
+
+    def _parsel_harita_boyutunu_al(self):
+        widget = getattr(self, "map_widget", None)
+        if widget is None:
+            return None
+        try:
+            widget.update_idletasks()
+            canvas = getattr(widget, "canvas", widget)
+            genislik = int(canvas.winfo_width())
+            yukseklik = int(canvas.winfo_height())
+        except (AttributeError, tk.TclError, TypeError, ValueError):
+            return None
+        if genislik < PARSEL_KADRAJ_MIN_BOYUT or yukseklik < PARSEL_KADRAJ_MIN_BOYUT:
+            return None
+        return genislik, yukseklik
+
+    def _parsel_kadraj_bekleyenini_iptal_et(self):
+        root = getattr(self, "root", None)
+        after_id = getattr(self, "_parsel_kadraj_after_id", None)
+        if after_id is not None and root is not None:
+            try:
+                root.after_cancel(after_id)
+            except (AttributeError, tk.TclError):
+                pass
+        self._parsel_kadraj_after_id = None
+
+        widget = getattr(self, "map_widget", None)
+        binding_id = getattr(self, "_parsel_kadraj_configure_binding_id", None)
+        if widget is not None and binding_id:
+            try:
+                widget.unbind("<Configure>", binding_id)
+            except (AttributeError, tk.TclError):
+                pass
+        self._parsel_kadraj_configure_binding_id = None
+        self._parsel_kadraj_bekliyor = False
+        self._parsel_kadraj_deneme = 0
+
+    def parsel_kadraj_beklemesini_iptal_et(self):
+        """Proje geçişinde bekleyen tek seferlik parsel kadrajını iptal eder."""
+        self._parsel_kadraj_bekleyenini_iptal_et()
+        self._parsel_odak_aktif = False
+        self._parsel_odak_geri_gorunumu = None
+        self._parsel_odak_uygulama_bekleniyor = False
+        self._parsel_odak_otomatik = False
+        self._parseli_odakla_dugmesini_guncelle()
+
+    def _parseli_odakla_configure(self, _event=None):
+        if not getattr(self, "_parsel_kadraj_bekliyor", False):
+            return
+        if getattr(self, "_parsel_kadraj_after_id", None) is not None:
+            return
+        root = getattr(self, "root", None)
+        if root is None:
+            return
+        try:
+            self._parsel_kadraj_after_id = root.after_idle(
+                self._parseli_odakla_bekleyenini_calistir
+            )
+        except (AttributeError, tk.TclError):
+            self._parsel_kadraj_after_id = None
+
+    def _parseli_odaklamayi_planla(self):
+        self._parsel_kadraj_bekliyor = True
+        self._parsel_kadraj_deneme = 0
+        widget = getattr(self, "map_widget", None)
+        if widget is not None and not getattr(self, "_parsel_kadraj_configure_binding_id", None):
+            try:
+                self._parsel_kadraj_configure_binding_id = widget.bind(
+                    "<Configure>", self._parseli_odakla_configure, add="+"
+                )
+            except (AttributeError, tk.TclError):
+                self._parsel_kadraj_configure_binding_id = None
+        self._parseli_odakla_configure()
+
+    def _parseli_odakla_bekleyenini_calistir(self):
+        self._parsel_kadraj_after_id = None
+        if not getattr(self, "_parsel_kadraj_bekliyor", False):
+            return False
+        if not getattr(self, "yuklu_kml_points", None):
+            self._parsel_kadraj_bekleyenini_iptal_et()
+            return False
+
+        boyut = self._parsel_harita_boyutunu_al()
+        if boyut is not None:
+            uygulandi = self._parseli_odakla_uygula(boyut)
+            if uygulandi:
+                self._parseli_odaklama_tamamlandi()
+                self._parsel_kadraj_bekleyenini_iptal_et()
+            return uygulandi
+
+        self._parsel_kadraj_deneme = getattr(self, "_parsel_kadraj_deneme", 0) + 1
+        root = getattr(self, "root", None)
+        if root is not None and self._parsel_kadraj_deneme < PARSEL_KADRAJ_BEKLEME_DENEMESI:
+            try:
+                self._parsel_kadraj_after_id = root.after(
+                    80, self._parseli_odakla_bekleyenini_calistir
+                )
+            except (AttributeError, tk.TclError):
+                self._parsel_kadraj_after_id = None
+        return False
+
+    def _parseli_odakla_uygula(self, boyut):
+        try:
+            min_zoom = int(getattr(self.map_widget, "min_zoom", 1))
+            max_zoom = int(getattr(self.map_widget, "max_zoom", 22))
+            merkez, zoom, ideal_zoom = parsel_etkilesimli_kadraj_hesapla(
+                getattr(self, "yuklu_kml_points", []),
+                boyut[0],
+                boyut[1],
+                min_zoom=min_zoom,
+                max_zoom=max_zoom,
+            )
+            self.map_widget.set_zoom(zoom)
+            self.map_widget.set_position(merkez[0], merkez[1])
+            self._parsel_kadraj_sonucu = {
+                "merkez": merkez,
+                "zoom": zoom,
+                "ideal_zoom": ideal_zoom,
+                "genislik": boyut[0],
+                "yukseklik": boyut[1],
+            }
+            return True
+        except Exception as exc:
+            self._parsel_odak_uygulama_bekleniyor = False
+            self._parsel_odak_otomatik = False
+            try:
+                self.hata_kaydet("Parsel haritası kadrajı ayarlanamadı", exc)
+            except Exception:
+                pass
+            return False
+
+    def _parsel_harita_gorunumunu_al(self):
+        try:
+            konum = self.map_widget.get_position()
+            zoom = float(getattr(self.map_widget, "zoom", 15))
+            enlem, boylam = float(konum[0]), float(konum[1])
+            if not all(math.isfinite(deger) for deger in (enlem, boylam, zoom)):
+                return None
+            return {"lat": enlem, "lon": boylam, "zoom": zoom}
+        except (AttributeError, IndexError, TypeError, ValueError):
+            return None
+
+    def _parseli_odakla_dugmesini_guncelle(self):
+        dugme = getattr(self, "btn_parseli_odakla", None)
+        if dugme is None:
+            return
+        metin = (
+            "Yakın Görünüme Dön"
+            if getattr(self, "_parsel_odak_aktif", False)
+            else "Parseli Odakla"
+        )
+        try:
+            dugme.configure(text=metin)
+        except tk.TclError:
+            pass
+
+    def parseli_odakla_dugmesini_guncelle(self):
+        """Refresh the focus button after loading a saved map view."""
+        self._parseli_odakla_dugmesini_guncelle()
+
+    def _parseli_odaklama_tamamlandi(self):
+        otomatik = bool(getattr(self, "_parsel_odak_otomatik", False))
+        self._parsel_odak_uygulama_bekleniyor = False
+        self._parsel_odak_otomatik = False
+        if otomatik:
+            sonuc = getattr(self, "_parsel_kadraj_sonucu", {}) or {}
+            merkez = sonuc.get("merkez")
+            zoom = sonuc.get("zoom")
+            if merkez and zoom is not None:
+                self._parsel_odak_geri_gorunumu = {
+                    "lat": merkez[0],
+                    "lon": merkez[1],
+                    "zoom": kesirli_zoom_degerini_duzelt(
+                        float(zoom) + KESIRLI_ZOOM_ADIMI,
+                        min_zoom=getattr(self.map_widget, "min_zoom", 1),
+                        max_zoom=getattr(self.map_widget, "max_zoom", 22),
+                        adim=KESIRLI_ZOOM_ADIMI,
+                    ),
+                }
+        self._parsel_odak_aktif = True
+        self._parseli_odakla_dugmesini_guncelle()
+        if otomatik and hasattr(self, "durum_mesaji_yaz"):
+            self.durum_mesaji_yaz(
+                "Parsel tam görünümde. Yakın çalışma görünümüne dönmek için düğmeye basın."
+            )
+
+    def _yakin_gorunume_don(self):
+        gorunum = getattr(self, "_parsel_odak_geri_gorunumu", None)
+        if not gorunum:
+            self._parsel_odak_aktif = False
+            self._parseli_odakla_dugmesini_guncelle()
+            return False
+        try:
+            self._parsel_kadraj_bekleyenini_iptal_et()
+            self.map_widget.set_zoom(gorunum["zoom"])
+            self.map_widget.set_position(gorunum["lat"], gorunum["lon"])
+        except Exception as exc:
+            try:
+                self.hata_kaydet("Önceki harita görünümüne dönülemedi", exc)
+            except Exception:
+                pass
+            return False
+
+        self._parsel_odak_geri_gorunumu = None
+        self._parsel_odak_aktif = False
+        self._parseli_odakla_dugmesini_guncelle()
+        if hasattr(self, "durum_mesaji_yaz"):
+            self.durum_mesaji_yaz("Yakın çalışma görünümüne dönüldü.")
+        return True
+
+    def parseli_odakla(self, otomatik=False):
+        """Parseli sığdırır veya saklanan yakın/pan görünümünü geri yükler."""
+        if not otomatik and getattr(self, "_parsel_odak_aktif", False):
+            return self._yakin_gorunume_don()
+        if not getattr(self, "yuklu_kml_points", None):
+            return False
+
+        if getattr(self, "_parsel_kadraj_bekliyor", False):
+            if not otomatik:
+                return False
+            self._parsel_kadraj_bekleyenini_iptal_et()
+
+        onceki_gorunum = self._parsel_harita_gorunumunu_al()
+        if otomatik:
+            # Yeni KML için eski, ilgisiz harita konumu yerine parsel merkezinde
+            # bir üst yakınlık düzeyi saklanır. Böylece ikinci tık çalışma
+            # alanına yakın, anlamlı bir görünüme döner.
+            try:
+                boyut = self._parsel_harita_boyutunu_al()
+                if boyut is not None:
+                    merkez, zoom, _ = parsel_etkilesimli_kadraj_hesapla(
+                        self.yuklu_kml_points,
+                        boyut[0],
+                        boyut[1],
+                        min_zoom=int(getattr(self.map_widget, "min_zoom", 1)),
+                        max_zoom=int(getattr(self.map_widget, "max_zoom", 22)),
+                    )
+                    onceki_gorunum = {
+                        "lat": merkez[0],
+                        "lon": merkez[1],
+                        "zoom": kesirli_zoom_degerini_duzelt(
+                            float(zoom) + KESIRLI_ZOOM_ADIMI,
+                            min_zoom=getattr(self.map_widget, "min_zoom", 1),
+                            max_zoom=getattr(self.map_widget, "max_zoom", 22),
+                            adim=KESIRLI_ZOOM_ADIMI,
+                        ),
+                    }
+            except (TypeError, ValueError):
+                pass
+        self._parsel_odak_geri_gorunumu = onceki_gorunum
+        self._parsel_odak_uygulama_bekleniyor = True
+        self._parsel_odak_otomatik = bool(otomatik)
+        self._parsel_odak_aktif = False
+        self._parseli_odakla_dugmesini_guncelle()
+
+        boyut = self._parsel_harita_boyutunu_al()
+        if boyut is None:
+            self._parseli_odaklamayi_planla()
+            return False
+
+        self._parsel_kadraj_bekleyenini_iptal_et()
+        uygulandi = self._parseli_odakla_uygula(boyut)
+        if uygulandi:
+            self._parseli_odaklama_tamamlandi()
+            if not otomatik and hasattr(self, "durum_mesaji_yaz"):
+                self.durum_mesaji_yaz(
+                    "Parsel tam görünümde. Önceki yakın/pan görünümüne dönmek için düğmeye basın."
+                )
+        return uygulandi
 
     def harita_araci_degisti(self):
         if self.ss_ilk_nokta is not None:
@@ -465,10 +824,10 @@ class HaritaIslemleri:
             self.parsel_haritasi_parsel = ""
             if hasattr(self, "proje_durum_seridi_guncelle"):
                 self.proje_durum_seridi_guncelle()
-            merkez_lat = (min(p[0] for p in poly_coords) + max(p[0] for p in poly_coords)) / 2
-            merkez_lon = (min(p[1] for p in poly_coords) + max(p[1] for p in poly_coords)) / 2
-            self.map_widget.set_position(merkez_lat, merkez_lon)
-            self.map_widget.set_zoom(15)
+            # KML yüklendiğinde sabit zoom yerine gerçek widget boyutuna göre
+            # güvenli kadraj uygula. Widget henüz yerleşmediyse metot bunu
+            # Configure/after_idle sonrasında tek seferlik olarak tamamlar.
+            self.parseli_odakla(otomatik=True)
             if hasattr(self, "jeoloji_harita_katmanini_yenile"):
                 self.jeoloji_harita_katmanini_yenile(zorla=True)
             if hasattr(self, "jeoloji_pafta_durumunu_guncelle"):
